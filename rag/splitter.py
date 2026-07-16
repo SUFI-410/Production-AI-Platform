@@ -53,7 +53,7 @@ class DocumentSplitter:
         documents: list[Document],
     ) -> list[Document]:
         """
-        Split documents into chunks.
+        Split documents while enriching metadata.
         """
 
         logger.info(
@@ -64,6 +64,58 @@ class DocumentSplitter:
         chunks = self.splitter.split_documents(
             documents
         )
+
+        document_chunk_counter: dict[str, int] = {}
+
+        for chunk in chunks:
+
+            metadata = chunk.metadata
+
+            source = metadata.get(
+                "source",
+                "unknown",
+            )
+
+            document_chunk_counter.setdefault(
+                source,
+                0,
+            )
+
+            document_chunk_counter[source] += 1
+
+            chunk.metadata = {
+
+                **metadata,
+
+                "document_id": source,
+
+                "chunk_index":
+                    document_chunk_counter[source],
+
+                "chunk_id":
+                    f"{source}::"
+                    f"{document_chunk_counter[source]}",
+
+                "chunk_size":
+                    len(chunk.page_content),
+
+                "domain":
+                    metadata.get(
+                        "url",
+                        source,
+                    ).split("/")[2]
+                    if "://" in metadata.get(
+                        "url",
+                        source,
+                    )
+                    else "local",
+
+                "knowledge_source":
+                    metadata.get(
+                        "document_type",
+                        "unknown",
+                    ),
+            }
 
         logger.info(
             "Generated %s chunk(s).",
