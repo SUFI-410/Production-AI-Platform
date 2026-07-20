@@ -55,18 +55,56 @@ class VectorStoreManager:
             and any(Config.CHROMA_DIR.iterdir())
         )
 
+    def _rebuild_bm25(self) -> None:
+        """
+        Rebuild the BM25 index from all chunks stored in Chroma.
+        """
+
+        if self.vectorstore is None:
+            raise VectorStoreNotInitializedError(
+                "Vector database has not been initialized."
+            )
+
+        data = self.vectorstore.get(
+            include=["documents", "metadatas"]
+        )
+
+        documents = [
+            Document(
+                page_content=text,
+                metadata=metadata or {},
+            )
+            for text, metadata in zip(
+                data["documents"],
+                data["metadatas"],
+            )
+        ]
+
+        self.bm25.build(documents)
+
+        logger.info(
+            "Rebuilt BM25 index from %s chunk(s).",
+            len(documents),
+        )
+
     # ---------------------------------------------------------
     # Create
     # ---------------------------------------------------------
 
-    def create(self, documents: list[Document]) -> Chroma:
+    def create(
+        self,
+        documents: list[Document],
+    ) -> Chroma:
         """
         Create a new vector database.
         """
+
         logger.info("Creating vector database...")
 
         splitter = DocumentSplitter()
+
         chunks = splitter.split(documents)
+
         splitter.statistics(chunks)
 
         self.bm25.build(chunks)
@@ -78,7 +116,10 @@ class VectorStoreManager:
             persist_directory=str(Config.CHROMA_DIR),
         )
 
-        logger.info("Indexed %s chunks.", len(chunks))
+        logger.info(
+            "Indexed %s chunks.",
+            len(chunks),
+        )
 
         return self.vectorstore
 
@@ -90,18 +131,23 @@ class VectorStoreManager:
         """
         Load an existing Chroma database.
         """
+
         if not self.database_exists():
             raise CollectionNotFoundError(
                 "No Chroma database found."
             )
 
-        logger.info("Loading existing Chroma database...")
+        logger.info(
+            "Loading existing Chroma database..."
+        )
 
         self.vectorstore = Chroma(
             collection_name=Config.CHROMA_COLLECTION,
             embedding_function=self.embeddings,
             persist_directory=str(Config.CHROMA_DIR),
         )
+
+        self._rebuild_bm25()
 
         logger.info("Database loaded.")
 
@@ -116,10 +162,13 @@ class VectorStoreManager:
         documents: list[Document],
     ) -> Chroma:
         """
-        Load existing database or create a new one.
+        Load an existing database or create a new one.
         """
+
         if self.database_exists():
-            logger.info("Existing database detected.")
+            logger.info(
+                "Existing database detected."
+            )
             return self.load()
 
         return self.create(documents)
@@ -151,9 +200,11 @@ class VectorStoreManager:
         if metadata_filter is not None:
             search_kwargs["filter"] = metadata_filter
 
-        chroma_retriever = self.vectorstore.as_retriever(
-            search_type=Config.SEARCH_TYPE,
-            search_kwargs=search_kwargs,
+        chroma_retriever = (
+            self.vectorstore.as_retriever(
+                search_type=Config.SEARCH_TYPE,
+                search_kwargs=search_kwargs,
+            )
         )
 
         return HybridRetriever(
@@ -169,6 +220,7 @@ class VectorStoreManager:
         """
         Return the number of indexed chunks.
         """
+
         if self.vectorstore is None:
             raise VectorStoreNotInitializedError(
                 "Vector database has not been initialized."
@@ -176,9 +228,14 @@ class VectorStoreManager:
 
         try:
             return self.vectorstore._collection.count()
+
         except AttributeError:
+
             collection = self.vectorstore.get()
-            return len(collection.get("ids", []))
+
+            return len(
+                collection.get("ids", [])
+            )
 
     # ---------------------------------------------------------
     # Reset
@@ -188,17 +245,22 @@ class VectorStoreManager:
         """
         Delete the Chroma database.
         """
+
         if Config.CHROMA_DIR.exists():
+
             shutil.rmtree(
                 Config.CHROMA_DIR,
                 ignore_errors=True,
             )
+
             Config.CHROMA_DIR.mkdir(
                 parents=True,
                 exist_ok=True,
             )
 
-            logger.info("Vector database removed.")
+            logger.info(
+                "Vector database removed."
+            )
 
             self.vectorstore = None
 
@@ -213,17 +275,19 @@ class VectorStoreManager:
         """
         Add new documents to an existing database.
         """
+
         if self.vectorstore is None:
             raise VectorStoreNotInitializedError(
                 "Vector database has not been initialized."
             )
 
         splitter = DocumentSplitter()
+
         chunks = splitter.split(documents)
 
-        self.bm25.build(chunks)
-
         self.vectorstore.add_documents(chunks)
+
+        self._rebuild_bm25()
 
         self.persist()
 
@@ -240,6 +304,7 @@ class VectorStoreManager:
         """
         Persist the database if supported.
         """
+
         if self.vectorstore is None:
             return
 

@@ -10,6 +10,7 @@ from rag.chain import RAGChain
 from rag.loader import DocumentLoader
 from rag.logger import get_logger
 from rag.vector_store import VectorStoreManager
+from rag.reranker import Reranker
 
 logger = get_logger(__name__)
 
@@ -22,6 +23,8 @@ class RAGApplication:
     def __init__(self) -> None:
 
         self.vector_manager = VectorStoreManager()
+
+        self.reranker = Reranker()
 
         self.chain: RAGChain | None = None
 
@@ -41,7 +44,7 @@ class RAGApplication:
             metadata_filter=metadata_filter,
         )
 
-        return RAGChain(retriever)
+        return RAGChain(retriever=retriever, reranker=self.reranker)
 
     # ---------------------------------------------------------
     # Initialization

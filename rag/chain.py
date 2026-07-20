@@ -21,7 +21,6 @@ from langchain_openai import ChatOpenAI
 from rag.config import Config
 from rag.logger import get_logger
 from rag.prompt import PromptFactory
-from rag.reranker import Reranker
 from rag.utils import format_documents
 
 logger = get_logger(__name__)
@@ -32,11 +31,11 @@ class RAGChain:
     Production Retrieval-Augmented Generation chain.
     """
 
-    def __init__(self, retriever):
+    def __init__(self, retriever, reranker):
 
         self.retriever = retriever
 
-        self.reranker = Reranker()
+        self.reranker = reranker
 
         self.llm = ChatOpenAI(
             model=Config.CHAT_MODEL,
