@@ -12,7 +12,7 @@ from __future__ import annotations
 from langchain_core.documents import Document
 
 from rag.exceptions import NoDocumentsRetrievedError
-from rag.fusion import reciprocal_rank_fusion
+from rag.fusion import ReciprocalRankFusion
 from rag.logger import get_logger
 
 logger = get_logger(__name__)
@@ -30,6 +30,7 @@ class Retriever:
     ):
         self.vector_retriever = vector_retriever
         self.hybrid_search = hybrid_search
+        self.rrf = ReciprocalRankFusion()
 
     # ---------------------------------------------------------
     # Retrieve
@@ -63,9 +64,8 @@ class Retriever:
                 question
             )
 
-            documents = reciprocal_rank_fusion(
-                vector_docs,
-                bm25_docs,
+            documents = self.rrf.fuse(
+                [vector_docs, bm25_docs]
             )
 
         else:

@@ -66,7 +66,15 @@ class ReciprocalRankFusion:
 
             key = (
                 document.page_content,
-                tuple(sorted(document.metadata.items())),
+                tuple(
+                    sorted(
+                        (
+                            (k, str(v))
+                            for k, v in document.metadata.items()
+                        ),
+                        key=lambda item: item[0],
+                    )
+                ),
             )
 
             if str(key) in seen:
@@ -116,7 +124,11 @@ class ReciprocalRankFusion:
                         document.page_content,
                         tuple(
                             sorted(
-                                document.metadata.items()
+                                (
+                                    (k, str(v))
+                                    for k, v in document.metadata.items()
+                                ),
+                                key=lambda item: item[0],
                             )
                         ),
                     )
@@ -126,8 +138,8 @@ class ReciprocalRankFusion:
                 lookup[key] = document
 
         ranked_keys = sorted(
-            scores,
-            key=scores.get,
+            scores.keys(),
+            key=lambda key: scores[key],
             reverse=True,
         )
 
