@@ -15,6 +15,7 @@ from langchain_core.documents import Document
 from rag.exceptions import NoDocumentsRetrievedError
 from rag.fusion import ReciprocalRankFusion
 from rag.logger import get_logger
+from rag.source_formatter import SourceFormatter
 
 logger = get_logger(__name__)
 
@@ -134,39 +135,10 @@ class Retriever:
     def sources(
         documents: list[Document],
     ) -> list[dict]:
+        """
+        Return formatted source information.
+        """
 
-        seen: set[tuple[str, str]] = set()
-        results: list[dict] = []
-
-        for document in documents:
-
-            source = document.metadata.get(
-                "source",
-                "Unknown",
-            )
-
-            page = str(
-                document.metadata.get(
-                    "page",
-                    "-",
-                )
-            )
-
-            key = (
-                source,
-                page,
-            )
-
-            if key in seen:
-                continue
-
-            seen.add(key)
-
-            results.append(
-                {
-                    "source": source,
-                    "page": page,
-                }
-            )
-
-        return results
+        return SourceFormatter.format(
+            documents
+        )

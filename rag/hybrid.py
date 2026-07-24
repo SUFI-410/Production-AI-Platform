@@ -7,6 +7,7 @@ from rag.adaptive_retrieval import AdaptiveRetrieval
 from rag.bm25 import BM25Retriever
 from rag.fusion import ReciprocalRankFusion
 from rag.logger import get_logger
+from rag.source_formatter import SourceFormatter
 
 logger = get_logger(__name__)
 
@@ -76,11 +77,9 @@ class HybridRetriever(RunnableLambda):
             )
 
             semantic_docs = self.chroma.invoke(query)
-
             semantic_docs = semantic_docs[:top_k]
 
             keyword_docs = self.bm25.search(query)
-
             keyword_docs = keyword_docs[:top_k]
 
             fused = self.rrf.fuse(
@@ -114,41 +113,9 @@ class HybridRetriever(RunnableLambda):
         documents: list[Document],
     ) -> list[dict]:
         """
-        Extract unique document sources.
+        Return formatted source information.
         """
 
-        seen: set[tuple[str, str]] = set()
-        results: list[dict] = []
-
-        for document in documents:
-
-            source = document.metadata.get(
-                "source",
-                "Unknown",
-            )
-
-            page = str(
-                document.metadata.get(
-                    "page",
-                    "-",
-                )
-            )
-
-            key = (
-                source,
-                page,
-            )
-
-            if key in seen:
-                continue
-
-            seen.add(key)
-
-            results.append(
-                {
-                    "source": source,
-                    "page": page,
-                }
-            )
-
-        return results
+        return SourceFormatter.format(
+            documents
+        )
