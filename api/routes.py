@@ -37,7 +37,6 @@ def chat(
         result = app.ask_with_sources(
             question=request.question,
         )
-        print(result)
 
         latency_ms = (
             time.perf_counter() - start
