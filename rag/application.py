@@ -255,30 +255,16 @@ class RAGApplication:
                 "Application has not been initialized."
             )
 
-        rewritten_question = self._prepare_question(
-            question
-        )
-
-        cache_key = self._cache_key(
-            rewritten_question,
-            metadata_filter,
-        )
-
-        cached = self.cache.get(
-            cache_key
-        )
-
+        # Check cache BEFORE rewriting
+        cache_key = self._cache_key(question, metadata_filter)
+        cached = self.cache.get(cache_key)
         if cached is not None:
-
-            logger.info(
-                "Response cache hit."
-            )
-
+            logger.info("Response cache hit.")
             return cached["answer"]
 
-        queries = self.multi_query.generate(
-            rewritten_question
-        )
+        # Cache miss – rewrite and generate
+        rewritten_question = self._prepare_question(question)
+        queries = self.multi_query.generate(rewritten_question)
 
         chain = (
             self.chain
@@ -286,10 +272,7 @@ class RAGApplication:
             else self._create_chain(metadata_filter)
         )
 
-        documents = chain.retrieve(
-            queries
-        )
-
+        documents = chain.retrieve(queries)
         answer = chain.invoke(
             question=rewritten_question,
             documents=documents,
@@ -303,6 +286,8 @@ class RAGApplication:
                 "sources": chain.retriever.sources(
                     documents
                 ),
+                "grounded": True,
+                "cached": False,
             },
         )
 
@@ -322,26 +307,36 @@ class RAGApplication:
                 "Application has not been initialized."
             )
 
-        rewritten_question = self._prepare_question(
-            question
+        logger.info("=" * 70)
+        logger.info("Original Question : %s", question)
+
+        # ---- Build cache key from original question (NO rewrite yet) ----
+        cache_key = self._cache_key(question, metadata_filter)
+
+        logger.info("Cache Key : %r", cache_key)
+        logger.info(
+            "Cache Size: %d",
+            self.cache.size(),
         )
 
-        cache_key = self._cache_key(
-            rewritten_question,
-            metadata_filter,
-        )
-
-        cached = self.cache.get(
-            cache_key
-        )
-
+        # ---- CHECK CACHE FIRST ----
+        cached = self.cache.get(cache_key)
         if cached is not None:
 
-            logger.info(
-                "Response cache hit."
-            )
-
+            logger.info("******** CACHE HIT ********")
+            cached = cached.copy()
+            cached["cached"] = True
+            logger.info("=" * 70)
             return cached
+
+        logger.info("******** CACHE MISS ********")
+
+        # ---- Only now rewrite (because we need a new answer) ----
+        rewritten_question = self._prepare_question(question)
+        logger.info(
+            "Rewritten Question: %s",
+            rewritten_question,
+        )
 
         queries = self.multi_query.generate(
             rewritten_question
@@ -362,10 +357,21 @@ class RAGApplication:
             documents=documents,
         )
 
+        result["cached"] = False
+
+        # Store using the original question as key
         self.cache.set(
             cache_key,
             result,
         )
+
+        logger.info("Saved response to cache.")
+        logger.info(
+            "Cache Size After Save: %d",
+            self.cache.size(),
+        )
+
+        logger.info("=" * 70)
 
         return result
 
