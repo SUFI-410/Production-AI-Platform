@@ -89,18 +89,69 @@ Vector Search            BM25 Search
 ## 📂 Project Structure
 
 ```
-production-ai-platform/
-│
+Production-AI-Platform/rag/
 ├── api/
-├── rag/
+│   ├── __init__.py
+│   ├── dependencies.py
+│   ├── main.py
+│   ├── routes.py
+│   └── schemas.py
 ├── data/
-├── docs/
-├── scripts/
+│   └── docs/
+│       ├── python_basics.md
+│       ├── python_decorators.md
+│       ├── python_functions.md
+│       ├── python_intro.md
+│       └── python_oop.md
+├── evaluation/
+│   ├── results/
+│   │   └── report.json
+│   ├── __init__.py
+│   ├── dataset.json
+│   ├── evaluate.py
+│   ├── metrics.py
+│   └── report.py
+├── rag/                               # core retrieval module
+│   ├── __init__.py
+│   ├── adaptive_retrieval.py
+│   ├── application.py
+│   ├── bm25.py
+│   ├── chain.py
+│   ├── cli.py
+│   ├── config.py
+│   ├── context_compressor.py
+│   ├── crawler.py
+│   ├── embeddings.py
+│   ├── exceptions.py
+│   ├── fusion.py
+│   ├── groundedness_checker.py
+│   ├── hybrid.py
+│   ├── importer.py
+│   ├── loader.py
+│   ├── logger.py
+│   ├── memory.py
+│   ├── multi_query.py
+│   ├── prompt.py
+│   ├── query_rewriter.py
+│   ├── reranker.py
+│   ├── response_cache.py
+│   ├── retriever.py
+│   ├── source_formatter.py
+│   ├── splitter.py
+│   ├── utils.py
+│   └── vector_store.py
 ├── tests/
+│   ├── test_cache.py
+│   ├── test_chain.py
+│   ├── test_reranker.py
+│   └── test_retriever.py
+├── app.py                             # FastAPI entrypoint
 ├── Dockerfile
 ├── docker-compose.yml
-├── requirements.txt
-└── README.md
+├── LICENSE
+├── PROJECT_PROGRESS.md
+├── README.md
+└── requirements.txt
 ```
 
 ---
