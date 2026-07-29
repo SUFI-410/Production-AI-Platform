@@ -1,95 +1,123 @@
-# Production RAG System
+# 🚀 Production AI Platform (RAG)
 
-A production-oriented Retrieval-Augmented Generation (RAG) system built with **Python**, **LangChain**, **OpenAI**, and **ChromaDB**.
+A production-ready Retrieval-Augmented Generation (RAG) platform built with FastAPI, LangChain, OpenAI, ChromaDB, and modern retrieval techniques.
 
-This project is designed with clean architecture, modular components, and production-ready practices. It supports indexing PDFs and websites into a vector database, enabling accurate question answering over custom knowledge sources.
-
----
-
-## Features
-
-- PDF document ingestion
-- Website crawling and indexing
-- ChromaDB vector database
-- OpenAI embeddings
-- LangChain retrieval pipeline
-- Metadata-aware document retrieval
-- Interactive command-line interface (CLI)
-- Modular, maintainable architecture
-- Structured logging
-- Environment-based configuration
+This platform enables organisations to build AI assistants that answer questions using their own documents and websites instead of relying solely on an LLM's general knowledge.
 
 ---
 
-## Tech Stack
+## ✨ Features
 
-- Python 3.12+
+- Hybrid Retrieval (Vector Search + BM25)
+- Reciprocal Rank Fusion (RRF)
+- Cross-Encoder Reranking
+- Adaptive Retrieval
+- Query Rewriting
+- Multi-Query Retrieval
+- Context Compression
+- Conversation Memory
+- Response Cache
+- Groundedness Checking
+- Website Crawling
+- Incremental Indexing
+- FastAPI REST API
+- Docker Support
+- Production-ready Architecture
+
+---
+
+## 🏗 Architecture
+
+```
+                User
+                  │
+                  ▼
+            FastAPI API
+                  │
+                  ▼
+          Query Processing
+                  │
+      ┌───────────┴───────────┐
+      ▼                       ▼
+Vector Search            BM25 Search
+      │                       │
+      └───────────┬───────────┘
+                  ▼
+       Reciprocal Rank Fusion
+                  ▼
+      Cross-Encoder Reranker
+                  ▼
+      Context Compression
+                  ▼
+          OpenAI GPT Model
+                  ▼
+              Final Answer
+```
+
+---
+
+## 🛠 Tech Stack
+
+### Backend
+
+- Python 3.12
+- FastAPI
 - LangChain
-- OpenAI
+- OpenAI API
+
+### Retrieval
+
 - ChromaDB
-- PyPDF
-- BeautifulSoup4
-- Requests
+- BM25
+- Reciprocal Rank Fusion
+- Cross-Encoder Reranker
+
+### AI
+
+- GPT-5 Mini
+- OpenAI Embeddings
+- Sentence Transformers
+
+### Deployment
+
+- Docker
+- Docker Compose
+- Oracle Cloud VM
 
 ---
 
-## Project Structure
+## 📂 Project Structure
 
-```text
-Production-RAG/
+```
+production-ai-platform/
 │
-├── app.py
+├── api/
+├── rag/
+├── data/
+├── docs/
+├── scripts/
+├── tests/
+├── Dockerfile
+├── docker-compose.yml
 ├── requirements.txt
-├── .env.example
-├── README.md
-│
-└── rag/
-    ├── application.py
-    ├── chain.py
-    ├── cli.py
-    ├── config.py
-    ├── crawler.py
-    ├── embeddings.py
-    ├── exceptions.py
-    ├── loader.py
-    ├── logger.py
-    ├── prompt.py
-    ├── retriever.py
-    ├── splitter.py
-    ├── utils.py
-    └── vector_store.py
+└── README.md
 ```
 
 ---
 
-## Installation
+## 🚀 Getting Started
 
-Clone the repository:
-
-```bash
-git clone https://github.com/SUFI-410/Production-RAG.git
-cd Production-RAG
-```
-
-Create a virtual environment:
+### Clone
 
 ```bash
-python -m venv .venv
+git clone https://github.com/YOUR_USERNAME/production-ai-platform.git
+
+cd production-ai-platform
 ```
 
-Activate it.
+---
 
-Windows:
-
-```bash
-.venv\Scripts\activate
-```
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
+### Create Environment File
 
 Create a `.env` file:
 
@@ -99,38 +127,70 @@ OPENAI_API_KEY=your_api_key_here
 
 ---
 
-## Running
+### Build Docker Image
 
 ```bash
-python app.py
+docker build -t production-ai-platform .
 ```
 
-The application will build a knowledge base from configured data sources and launch an interactive CLI.
+---
+
+### Run
+
+```bash
+docker run -d \
+-p 8000:8000 \
+--env-file .env \
+production-ai-platform
+```
 
 ---
 
-## Current Capabilities
+## API
 
-- Answer questions from indexed PDFs
-- Crawl and index websites
-- Persistent ChromaDB storage
-- Metadata filtering
-- Multi-source document loading
+### Health Check
+
+```
+GET /health
+```
+
+### Chat
+
+```
+POST /chat
+```
+
+Example Request
+
+```json
+{
+  "question": "What is polymorphism?"
+}
+```
 
 ---
 
-## Planned Improvements
+## Example Workflow
 
-- FastAPI REST API
-- Hybrid Search (Vector + BM25)
-- Cross-Encoder Re-ranking
-- Conversation Memory
-- Docker & Docker Compose
-- PostgreSQL metadata storage
-- Redis caching
-- GitHub Actions CI/CD
-- Automated testing
-- Cloud deployment
+1. Load documents
+2. Build knowledge base
+3. User asks a question
+4. Hybrid retrieval finds relevant documents
+5. Reranker improves ranking
+6. GPT generates a grounded answer
+7. Sources are returned
+
+---
+
+## Future Improvements
+
+- Authentication
+- Streaming responses
+- PostgreSQL support
+- Redis distributed cache
+- Kubernetes deployment
+- CI/CD pipeline
+- Monitoring with Prometheus & Grafana
 
 ---
 
