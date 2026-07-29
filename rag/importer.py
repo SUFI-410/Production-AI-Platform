@@ -136,7 +136,7 @@ class MarkdownImporter:
         return self.converter.handle(
             str(soup)
         )
-    
+
 
     # ---------------------------------------------------------
     # Download Single Page
@@ -348,7 +348,7 @@ class MarkdownImporter:
                 "*.md"
             )
         )
-    
+
 
     # ---------------------------------------------------------
     # Delete Documents
