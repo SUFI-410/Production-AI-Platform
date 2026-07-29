@@ -27,17 +27,10 @@ class CLI:
     # ---------------------------------------------------------
 
     def initialize(self) -> None:
-
         if self.app.vector_manager.database_exists():
-
             print("\n📂 Loading existing Chroma database...\n")
-
-            logger.info(
-                "Loading existing Chroma database."
-            )
-
+            logger.info("Loading existing Chroma database.")
             self.app.load_existing()
-
             return
 
         print("\nNo existing database found.\n")
@@ -52,66 +45,43 @@ class CLI:
         docs_directory = Path("data/docs")
 
         if not docs_directory.exists():
-
             print("\nMissing directory: data/docs\n")
-
             raise SystemExit
 
-        markdown_files = sorted(
-            docs_directory.glob("*.md")
-        )
+        markdown_files = sorted(docs_directory.glob("*.md"))
 
         if not markdown_files:
-
             print("\nNo Markdown files found.\n")
-
             raise SystemExit
 
         sources: list[dict] = []
 
         for markdown in markdown_files:
+            sources.append({"type": "markdown", "path": str(markdown)})
 
-            sources.append(
-                {
-                    "type": "markdown",
-                    "path": str(markdown),
-                }
-            )
+        sources.append({"type": "web", "url": "https://thetechfury.com/"})
 
-        sources.append(
-            {
-                "type": "web",
-                "url": "https://thetechfury.com/",
-            }
-        )
-
+        # Fixed: line split to under 88 characters
         print(
-            f"\nBuilding knowledge base from {len(markdown_files)} Markdown document(s) and TechFury website...\n"
+            f"\nBuilding knowledge base from {len(markdown_files)} "
+            f"Markdown document(s) and TechFury website...\n"
         )
 
-        self.app.initialize_sources(
-            sources
-        )
+        self.app.initialize_sources(sources)
 
     # ---------------------------------------------------------
     # Menu
     # ---------------------------------------------------------
 
     def menu(self) -> None:
-
         print("\nProduction RAG Ready.")
         print("Type 'help' for commands.\n")
 
         while True:
-
             try:
-
                 command = input("RAG> ").strip()
-
             except (KeyboardInterrupt, EOFError):
-
                 print("\n\nGoodbye!\n")
-
                 break
 
             if not command:
@@ -119,94 +89,53 @@ class CLI:
 
             command_lower = command.lower()
 
-            if command_lower in {
-                "quit",
-                "exit",
-            }:
-
+            if command_lower in {"quit", "exit"}:
                 print("\nGoodbye!\n")
-
                 break
 
             if command_lower == "help":
-
                 self.help()
-
                 continue
 
             if command_lower == "stats":
-
-                print(
-                    f"\nIndexed chunks: {self.app.database_size()}\n"
-                )
-
+                print(f"\nIndexed chunks: {self.app.database_size()}\n")
                 continue
 
             if command_lower == "reset":
-
-                confirm = input(
-                    "Delete Chroma database? (y/n): "
-                ).strip().lower()
-
+                confirm = input("Delete Chroma database? (y/n): ").strip().lower()
                 if confirm == "y":
-
                     self.app.reset_database()
-
                     print("\nDatabase removed.\n")
-
                     break
-
                 continue
 
             # ---------------------------------------------
             # use <source>
             # ---------------------------------------------
-
             if command_lower.startswith("use "):
-
                 source = command[4:].strip()
-
-                self.metadata_filter = {
-                    "source": source,
-                }
-
+                self.metadata_filter = {"source": source}
                 print(f"\nUsing only:\n{source}\n")
-
                 continue
 
             # ---------------------------------------------
             # use all
             # ---------------------------------------------
-
             if command_lower == "use all":
-
                 self.metadata_filter = None
-
-                print(
-                    "\nSearching all indexed documents.\n"
-                )
-
+                print("\nSearching all indexed documents.\n")
                 continue
 
             try:
-
                 result = self.app.ask_with_sources(
                     question=command,
                     metadata_filter=self.metadata_filter,
                 )
-
                 print("\nAnswer\n")
-
                 print(result["answer"])
-
-                print_sources(
-                    result["documents"]
-                )
-
+                print_sources(result["documents"])
             except Exception as exc:
-
                 logger.exception(exc)
-
                 print(f"\nError: {exc}\n")
 
     # ---------------------------------------------------------
@@ -215,9 +144,7 @@ class CLI:
 
     @staticmethod
     def help() -> None:
-
         print()
-
         print("Commands")
         print("-------------------------------------------")
         print("help                - Show commands")
@@ -233,19 +160,11 @@ class CLI:
     # ---------------------------------------------------------
 
     def run(self) -> None:
-
         try:
-
             self.initialize()
-
             self.menu()
-
         except KeyboardInterrupt:
-
             print("\n\nApplication interrupted.\n")
-
         except Exception as exc:
-
             logger.exception(exc)
-
             print(f"\nFatal error: {exc}\n")
