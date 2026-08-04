@@ -5,6 +5,7 @@ Responsibilities:
 - Convert LangChain Documents into API source objects.
 - Remove duplicate documents.
 - Extract useful metadata.
+- Provide consistent source identities for citations.
 """
 
 from __future__ import annotations
@@ -18,27 +19,44 @@ class SourceFormatter:
     """
 
     @staticmethod
+    def document_name(
+        document: Document,
+    ) -> str:
+        """
+        Return the canonical identity used for source numbering.
+
+        Context citations and API sources must both use this
+        value so their numbering remains aligned.
+        """
+
+        metadata = document.metadata
+
+        document_name = (
+            metadata.get("file_name")
+            or metadata.get("source")
+            or "Unknown"
+        )
+
+        return str(document_name)
+
+    @classmethod
     def format(
+        cls,
         documents: list[Document],
     ) -> list[dict]:
         """
-        Return unique source metadata for API responses.
+        Return unique source metadata in first-appearance order.
+
+        Reranked documents are already ordered by relevance, so
+        the first occurrence also supplies the source's best score.
         """
 
         seen: set[str] = set()
         results: list[dict] = []
 
         for document in documents:
-
             metadata = document.metadata
-
-            document_name = metadata.get(
-                "file_name",
-                metadata.get(
-                    "source",
-                    "Unknown",
-                ),
-            )
+            document_name = cls.document_name(document)
 
             if document_name in seen:
                 continue

@@ -10,6 +10,7 @@ from typing import Iterable
 from langchain_core.documents import Document
 
 from rag.logger import get_logger
+from rag.source_formatter import SourceFormatter
 
 logger = get_logger(__name__)
 
@@ -23,28 +24,40 @@ def format_documents(
     documents: list[Document],
 ) -> str:
     """
-    Convert retrieved documents into a numbered context string
-    for citation-aware prompting.
+    Convert documents into citation-aware prompt context.
+
+    All chunks belonging to the same source receive the same
+    citation number. The numbering follows first-appearance order,
+    matching SourceFormatter.format().
     """
 
     if not documents:
         return ""
 
     sections: list[str] = []
+    citation_numbers: dict[str, int] = {}
 
-    for index, document in enumerate(documents, start=1):
-
+    for document in documents:
         content = document.page_content.strip()
 
         if not content:
             continue
 
-        source = source_name(document)
+        source = SourceFormatter.document_name(
+            document
+        )
+
+        if source not in citation_numbers:
+            citation_numbers[source] = (
+                len(citation_numbers) + 1
+            )
+
+        citation_number = citation_numbers[source]
         page = page_number(document)
 
         sections.append(
             f"""
-[{index}]
+[{citation_number}]
 Source: {source}
 Page: {page}
 
@@ -52,9 +65,9 @@ Page: {page}
 """.strip()
         )
 
-    return "\n\n" + ("-" * 70).join(
-        f"\n\n{section}" for section in sections
-    )
+    separator = f"\n\n{'-' * 70}\n\n"
+
+    return separator.join(sections)
 
 
 # ----------------------------------------------------------------------
@@ -69,15 +82,14 @@ def source_name(
     Return a human-readable source name.
     """
 
-    source = document.metadata.get("source")
+    source = SourceFormatter.document_name(
+        document
+    )
 
-    if not source:
-        return "Unknown"
-
-    if isinstance(source, str) and source.startswith("http"):
+    if source.startswith(("http://", "https://")):
         return source
 
-    return Path(str(source)).name
+    return Path(source.replace("\\", "/")).name
 
 
 def page_number(
@@ -109,7 +121,6 @@ def unique_sources(
     result: list[tuple[str, str]] = []
 
     for document in documents:
-
         source = source_name(document)
         page = page_number(document)
 
@@ -133,7 +144,11 @@ def print_sources(
     logger.info("-" * 60)
 
     for source, page in unique_sources(documents):
-        logger.info("• %s (page %s)", source, page)
+        logger.info(
+            "• %s (page %s)",
+            source,
+            page,
+        )
 
     logger.info("-" * 60)
 
@@ -159,7 +174,10 @@ def truncate(
     truncated = text[:length]
 
     if " " in truncated:
-        truncated = truncated.rsplit(" ", 1)[0]
+        truncated = truncated.rsplit(
+            " ",
+            1,
+        )[0]
 
     return truncated + "..."
 
@@ -197,7 +215,9 @@ def chunk_metadata(
     return {
         "source": source_name(document),
         "page": page_number(document),
-        "characters": len(document.page_content),
+        "characters": len(
+            document.page_content
+        ),
     }
 
 
