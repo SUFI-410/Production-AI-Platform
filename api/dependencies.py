@@ -7,7 +7,7 @@ instance used by all API requests.
 
 from __future__ import annotations
 
-from functools import lru_cache
+from threading import Lock
 
 from rag.application import RAGApplication
 from rag.logger import get_logger
@@ -15,36 +15,54 @@ from rag.logger import get_logger
 logger = get_logger(__name__)
 
 
-@lru_cache(maxsize=1)
+_rag_application: RAGApplication | None = None
+_initialization_lock = Lock()
+
+
 def get_rag_application() -> RAGApplication:
     """
     Return the singleton RAG application.
 
-    The application is created only once during the
-    process lifetime and reused for every request.
+    Initialization is protected by a process-level lock so that
+    concurrent requests cannot initialize the RAG application
+    more than once.
     """
 
-    logger.info("Initializing RAG application...")
+    global _rag_application
 
-    app = RAGApplication()
+    if _rag_application is not None:
+        return _rag_application
 
-    try:
-        app.load_existing()
-        logger.info("Existing vector database loaded.")
-    except Exception as exc:
-        logger.warning(
-            "No existing vector database found: %s",
-            exc,
+    with _initialization_lock:
+        if _rag_application is not None:
+            return _rag_application
+
+        logger.info("Initializing RAG application...")
+
+        application = RAGApplication()
+
+        try:
+            application.load_existing()
+        except Exception:
+            logger.exception(
+                "Failed to initialize the RAG application."
+            )
+            raise
+
+        _rag_application = application
+
+        logger.info(
+            "RAG application initialized successfully."
         )
 
-    return app
+        return _rag_application
 
 
 def get_application() -> RAGApplication:
     """
     FastAPI dependency.
 
-    Returns the shared RAG application instance.
+    Return the shared, fully initialized RAG application.
     """
 
     return get_rag_application()
