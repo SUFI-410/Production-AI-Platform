@@ -24,6 +24,15 @@ SITEVERIFY_URL = (
 
 SITEVERIFY_TIMEOUT_SECONDS = 10.0
 
+CONFIGURATION_ERROR_CODES = {
+    "invalid-input-secret",
+    "missing-input-secret",
+}
+
+TRANSIENT_ERROR_CODES = {
+    "internal-error",
+}
+
 
 def _client_ip(request: Request) -> str:
     """
@@ -50,6 +59,53 @@ def _client_ip(request: Request) -> str:
     return ""
 
 
+def _error_codes(
+    result: dict[str, Any],
+) -> list[str]:
+    """
+    Return sanitized Siteverify error codes.
+    """
+
+    raw_error_codes = result.get(
+        "error-codes",
+        [],
+    )
+
+    if not isinstance(raw_error_codes, list):
+        return []
+
+    return [
+        error_code
+        for error_code in raw_error_codes
+        if isinstance(error_code, str)
+    ]
+
+
+def _verification_unavailable() -> HTTPException:
+    """
+    Return an error for configuration or upstream failures.
+    """
+
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=(
+            "Human verification is temporarily "
+            "unavailable."
+        ),
+    )
+
+
+def _verification_rejected() -> HTTPException:
+    """
+    Return an error for an invalid or expired token.
+    """
+
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Human verification failed.",
+    )
+
+
 def verify_turnstile(
     token: str,
     request: Request,
@@ -69,15 +125,7 @@ def verify_turnstile(
             "TURNSTILE_SECRET is not configured."
         )
 
-        raise HTTPException(
-            status_code=(
-                status.HTTP_503_SERVICE_UNAVAILABLE
-            ),
-            detail=(
-                "Human verification is temporarily "
-                "unavailable."
-            ),
-        )
+        raise _verification_unavailable()
 
     payload = {
         "secret": secret,
@@ -91,37 +139,70 @@ def verify_turnstile(
             data=payload,
             timeout=SITEVERIFY_TIMEOUT_SECONDS,
         )
-
-        response.raise_for_status()
-
-        result: dict[str, Any] = response.json()
-
-    except (
-        httpx.HTTPError,
-        ValueError,
-    ):
-
+    except httpx.RequestError:
         logger.exception(
-            "Turnstile Siteverify request failed."
+            "Turnstile Siteverify network request failed."
         )
 
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Human verification failed.",
+        raise _verification_unavailable() from None
+
+    try:
+        parsed_result = response.json()
+    except ValueError:
+        logger.error(
+            "Turnstile Siteverify returned invalid JSON "
+            "(HTTP %d).",
+            response.status_code,
         )
 
-    if result.get("success") is not True:
-        error_codes = result.get(
-            "error-codes",
-            [],
+        raise _verification_unavailable() from None
+
+    if not isinstance(parsed_result, dict):
+        logger.error(
+            "Turnstile Siteverify returned an unexpected "
+            "JSON type: %s.",
+            type(parsed_result).__name__,
         )
 
-        logger.warning(
-            "Turnstile verification rejected: %s",
+        raise _verification_unavailable()
+
+    result: dict[str, Any] = parsed_result
+    error_codes = _error_codes(result)
+
+    if (
+        response.is_success
+        and result.get("success") is True
+    ):
+        return
+
+    configuration_failed = any(
+        error_code in CONFIGURATION_ERROR_CODES
+        for error_code in error_codes
+    )
+
+    upstream_failed = (
+        response.status_code >= 500
+        or any(
+            error_code in TRANSIENT_ERROR_CODES
+            for error_code in error_codes
+        )
+    )
+
+    if configuration_failed or upstream_failed:
+        logger.error(
+            "Turnstile Siteverify unavailable or "
+            "misconfigured: HTTP %d; error codes=%s.",
+            response.status_code,
             error_codes,
         )
 
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Human verification failed.",
-        )
+        raise _verification_unavailable()
+
+    logger.warning(
+        "Turnstile verification rejected: "
+        "HTTP %d; error codes=%s.",
+        response.status_code,
+        error_codes,
+    )
+
+    raise _verification_rejected()
