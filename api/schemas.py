@@ -27,6 +27,13 @@ class ChatRequest(BaseModel):
         examples=["Explain Python decorators."],
     )
 
+    turnstile_token: str = Field(
+        ...,
+        min_length=1,
+        max_length=2048,
+        description="Single-use Cloudflare Turnstile verification token.",
+    )
+
     session_id: str | None = Field(
         default=None,
         description="Optional conversation/session identifier.",
