@@ -6,10 +6,17 @@ from __future__ import annotations
 
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    status,
+)
 
 from api.dependencies import get_application
 from api.schemas import ChatRequest, ChatResponse
+from api.turnstile import verify_turnstile
 from rag.application import RAGApplication
 from rag.logger import get_logger
 
@@ -24,18 +31,24 @@ router = APIRouter(tags=["RAG"])
     status_code=status.HTTP_200_OK,
 )
 def chat(
-    request: ChatRequest,
+    payload: ChatRequest,
+    http_request: Request,
     app: RAGApplication = Depends(get_application),
 ) -> ChatResponse:
     """
-    Ask the RAG system a question.
+    Ask the RAG system a verified question.
     """
 
     start = time.perf_counter()
 
+    verify_turnstile(
+        token=payload.turnstile_token,
+        request=http_request,
+    )
+
     try:
         result = app.ask_with_sources(
-            question=request.question,
+            question=payload.question,
         )
 
         latency_ms = (
