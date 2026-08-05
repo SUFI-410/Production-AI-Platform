@@ -8,7 +8,6 @@ import time
 
 from fastapi import (
     APIRouter,
-    Depends,
     HTTPException,
     Request,
     status,
@@ -17,7 +16,6 @@ from fastapi import (
 from api.dependencies import get_application
 from api.schemas import ChatRequest, ChatResponse
 from api.turnstile import verify_turnstile
-from rag.application import RAGApplication
 from rag.logger import get_logger
 
 logger = get_logger(__name__)
@@ -33,10 +31,12 @@ router = APIRouter(tags=["RAG"])
 def chat(
     payload: ChatRequest,
     http_request: Request,
-    app: RAGApplication = Depends(get_application),
 ) -> ChatResponse:
     """
     Ask the RAG system a verified question.
+
+    Human verification runs before the expensive RAG
+    application is initialized.
     """
 
     start = time.perf_counter()
@@ -47,6 +47,8 @@ def chat(
     )
 
     try:
+        app = get_application()
+
         result = app.ask_with_sources(
             question=payload.question,
         )
@@ -64,7 +66,6 @@ def chat(
         )
 
     except Exception:
-
         logger.exception(
             "Failed to process chat request."
         )
@@ -72,4 +73,4 @@ def chat(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error.",
-        )
+        ) from None
