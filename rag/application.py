@@ -4,13 +4,16 @@ Main RAG application orchestrator.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import uuid
 from pathlib import Path
 
 from rag.chain import RAGChain
 from rag.config import Config
 from rag.loader import DocumentLoader
 from rag.logger import get_logger
-from rag.memory import ConversationMemory
+from rag.memory import SessionMemoryStore
 from rag.multi_query import MultiQueryGenerator
 from rag.query_rewriter import QueryRewriter
 from rag.reranker import Reranker
@@ -23,18 +26,29 @@ logger = get_logger(__name__)
 class RAGApplication:
     """
     High-level interface for the Production RAG system.
+
+    Conversation history is isolated by session ID. Requests
+    for the same session are serialized by SessionMemoryStore.
     """
 
     def __init__(self) -> None:
-
         self.vector_manager = VectorStoreManager()
-
         self.reranker = Reranker()
 
-        self.memory = ConversationMemory()
+        self.memory_store = SessionMemoryStore(
+            ttl_seconds=Config.SESSION_TTL,
+            max_sessions=Config.SESSION_MAX_SESSIONS,
+            max_messages=Config.SESSION_MAX_MESSAGES,
+        )
+
+        # CLI and evaluation callers may omit a session ID.
+        # Such calls share one private session for this application
+        # instance rather than a process-wide fixed session name.
+        self._default_session_id = (
+            f"local-{uuid.uuid4().hex}"
+        )
 
         self.query_rewriter = QueryRewriter()
-
         self.multi_query = MultiQueryGenerator()
 
         self.cache = ResponseCache(
@@ -62,19 +76,36 @@ class RAGApplication:
         return RAGChain(
             retriever=retriever,
             reranker=self.reranker,
-            memory=self.memory,
         )
+
+    def _resolve_session_id(
+        self,
+        session_id: str | None,
+    ) -> str:
+        """
+        Return a valid session ID for the request.
+        """
+
+        if session_id is None:
+            return self._default_session_id
+
+        normalized_session_id = session_id.strip()
+
+        if not normalized_session_id:
+            raise ValueError(
+                "session_id must not be empty."
+            )
+
+        return normalized_session_id
 
     def _prepare_question(
         self,
         question: str,
+        history: str,
     ) -> str:
         """
-        Rewrite the question using conversation history
-        when history is available.
+        Rewrite the question when session history is available.
         """
-
-        history = self.memory.formatted_history()
 
         if not history.strip():
             return question
@@ -88,15 +119,91 @@ class RAGApplication:
         self,
         question: str,
         metadata_filter: dict[str, str] | None,
+        session_id: str,
+        history: str,
     ) -> str:
         """
-        Build a cache key that also includes metadata filters.
+        Build a deterministic session-aware cache key.
+
+        History is included because the same question can have
+        a different meaning at different conversation points.
         """
 
-        if metadata_filter is None:
-            return question
+        payload = {
+            "session_id": session_id,
+            "question": question.strip(),
+            "metadata_filter": metadata_filter or {},
+            "history": history,
+        }
 
-        return f"{question}|{sorted(metadata_filter.items())}"
+        serialized_payload = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+        return hashlib.sha256(
+            serialized_payload.encode("utf-8")
+        ).hexdigest()
+
+    def _select_chain(
+        self,
+        metadata_filter: dict[str, str] | None,
+    ) -> RAGChain:
+        """
+        Return the default or filtered chain.
+        """
+
+        if self.chain is None:
+            raise RuntimeError(
+                "Application has not been initialized."
+            )
+
+        if metadata_filter is None:
+            return self.chain
+
+        return self._create_chain(
+            metadata_filter=metadata_filter,
+        )
+
+    def _generate_response(
+        self,
+        question: str,
+        history: str,
+        metadata_filter: dict[str, str] | None,
+    ) -> dict:
+        """
+        Retrieve documents and generate a response.
+        """
+
+        rewritten_question = self._prepare_question(
+            question=question,
+            history=history,
+        )
+
+        logger.info(
+            "Rewritten Question: %s",
+            rewritten_question,
+        )
+
+        queries = self.multi_query.generate(
+            rewritten_question
+        )
+
+        chain = self._select_chain(
+            metadata_filter=metadata_filter,
+        )
+
+        documents = chain.retrieve(
+            queries
+        )
+
+        return chain.ask(
+            question=rewritten_question,
+            documents=documents,
+            history=history,
+        )
 
     # ---------------------------------------------------------
     # Initialization
@@ -106,7 +213,6 @@ class RAGApplication:
         self,
         pdf_path: str | Path,
     ) -> None:
-
         logger.info("Initializing from PDF...")
 
         documents = DocumentLoader.load_pdf(pdf_path)
@@ -121,7 +227,6 @@ class RAGApplication:
         self,
         pdfs: list[str | Path],
     ) -> None:
-
         logger.info("Initializing from PDFs...")
 
         documents = DocumentLoader.load_pdfs(pdfs)
@@ -136,7 +241,6 @@ class RAGApplication:
         self,
         url: str,
     ) -> None:
-
         logger.info("Initializing from website...")
 
         documents = DocumentLoader.load_web(url)
@@ -151,7 +255,6 @@ class RAGApplication:
         self,
         sources: list[dict],
     ) -> None:
-
         logger.info("Initializing from mixed sources...")
 
         documents = DocumentLoader.load_sources(sources)
@@ -163,7 +266,6 @@ class RAGApplication:
         logger.info("Application initialized.")
 
     def load_existing(self) -> None:
-
         logger.info("Loading existing database...")
 
         self.vector_manager.load()
@@ -171,7 +273,6 @@ class RAGApplication:
         self.chain = self._create_chain()
 
         logger.info("Existing database loaded.")
-
 
     # ---------------------------------------------------------
     # Incremental Ingestion
@@ -245,61 +346,35 @@ class RAGApplication:
         self,
         question: str,
         metadata_filter: dict[str, str] | None = None,
+        session_id: str | None = None,
+        use_cache: bool = True,
     ) -> str:
         """
         Return only the generated answer.
         """
 
-        if self.chain is None:
-            raise RuntimeError(
-                "Application has not been initialized."
-            )
-
-        # Check cache BEFORE rewriting
-        cache_key = self._cache_key(question, metadata_filter)
-        cached = self.cache.get(cache_key)
-        if cached is not None:
-            logger.info("Response cache hit.")
-            return cached["answer"]
-
-        # Cache miss – rewrite and generate
-        rewritten_question = self._prepare_question(question)
-        queries = self.multi_query.generate(rewritten_question)
-
-        chain = (
-            self.chain
-            if metadata_filter is None
-            else self._create_chain(metadata_filter)
+        result = self.ask_with_sources(
+            question=question,
+            metadata_filter=metadata_filter,
+            session_id=session_id,
+            use_cache=use_cache,
         )
 
-        documents = chain.retrieve(queries)
-        answer = chain.invoke(
-            question=rewritten_question,
-            documents=documents,
-        )
-
-        self.cache.set(
-            cache_key,
-            {
-                "answer": answer,
-                "documents": documents,
-                "sources": chain.retriever.sources(
-                    documents
-                ),
-                "grounded": True,
-                "cached": False,
-            },
-        )
-
-        return answer
+        return result["answer"]
 
     def ask_with_sources(
         self,
         question: str,
         metadata_filter: dict[str, str] | None = None,
+        session_id: str | None = None,
+        use_cache: bool = True,
     ) -> dict:
         """
-        Return answer plus sources.
+        Return an answer plus sources.
+
+        The session lock covers history reading, query rewriting,
+        generation, cache handling, and memory mutation. This
+        guarantees ordered exchanges within one session.
         """
 
         if self.chain is None:
@@ -307,73 +382,87 @@ class RAGApplication:
                 "Application has not been initialized."
             )
 
+        resolved_session_id = self._resolve_session_id(
+            session_id
+        )
+
         logger.info("=" * 70)
         logger.info("Original Question : %s", question)
-
-        # ---- Build cache key from original question (NO rewrite yet) ----
-        cache_key = self._cache_key(question, metadata_filter)
-
-        logger.info("Cache Key : %r", cache_key)
         logger.info(
-            "Cache Size: %d",
-            self.cache.size(),
+            "Session ID        : %s",
+            resolved_session_id,
         )
 
-        # ---- CHECK CACHE FIRST ----
-        cached = self.cache.get(cache_key)
-        if cached is not None:
+        with self.memory_store.session(
+            resolved_session_id
+        ) as memory:
+            history = memory.formatted_history()
 
-            logger.info("******** CACHE HIT ********")
-            cached = cached.copy()
-            cached["cached"] = True
+            cache_key = self._cache_key(
+                question=question,
+                metadata_filter=metadata_filter,
+                session_id=resolved_session_id,
+                history=history,
+            )
+
+            logger.info("Cache Key : %r", cache_key)
+            logger.info(
+                "Cache Size: %d",
+                self.cache.size(),
+            )
+
+            if use_cache:
+                cached = self.cache.get(cache_key)
+
+                if cached is not None:
+                    logger.info("******** CACHE HIT ********")
+
+                    result = cached.copy()
+                    result["cached"] = True
+                    result["session_id"] = resolved_session_id
+
+                    memory.add_exchange(
+                        user_message=question,
+                        assistant_message=result["answer"],
+                    )
+
+                    logger.info("=" * 70)
+
+                    return result
+            else:
+                logger.info("Response cache disabled.")
+
+            logger.info("******** CACHE MISS ********")
+
+            result = self._generate_response(
+                question=question,
+                history=history,
+                metadata_filter=metadata_filter,
+            )
+
+            result["cached"] = False
+            result["session_id"] = resolved_session_id
+
+            memory.add_exchange(
+                user_message=question,
+                assistant_message=result["answer"],
+            )
+
+            if use_cache:
+                self.cache.set(
+                    cache_key,
+                    result.copy(),
+                )
+
+                logger.info("Saved response to cache.")
+                logger.info(
+                    "Cache Size After Save: %d",
+                    self.cache.size(),
+                )
+
             logger.info("=" * 70)
-            return cached
 
-        logger.info("******** CACHE MISS ********")
-
-        # ---- Only now rewrite (because we need a new answer) ----
-        rewritten_question = self._prepare_question(question)
-        logger.info(
-            "Rewritten Question: %s",
-            rewritten_question,
-        )
-
-        queries = self.multi_query.generate(
-            rewritten_question
-        )
-
-        chain = (
-            self.chain
-            if metadata_filter is None
-            else self._create_chain(metadata_filter)
-        )
-
-        documents = chain.retrieve(
-            queries
-        )
-
-        result = chain.ask(
-            question=rewritten_question,
-            documents=documents,
-        )
-
-        result["cached"] = False
-
-        # Store using the original question as key
-        self.cache.set(
-            cache_key,
-            result,
-        )
-
-        logger.info("Saved response to cache.")
-        logger.info(
-            "Cache Size After Save: %d",
-            self.cache.size(),
-        )
-
-        logger.info("=" * 70)
-
-        return result
+            return result
 
     # ---------------------------------------------------------
     # Database
@@ -381,12 +470,13 @@ class RAGApplication:
 
     def reset_database(self) -> None:
         """
-        Delete the Chroma database.
+        Delete the Chroma database and runtime state.
         """
 
         self.vector_manager.reset()
 
         self.cache.clear()
+        self.memory_store.clear()
 
     def database_size(self) -> int:
         """

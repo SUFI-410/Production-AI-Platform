@@ -6,12 +6,14 @@ Responsibilities:
 - Compress context
 - Rerank documents
 - Invoke GPT model
-- Maintain conversation memory
-- Return answer and sources
+- Return answers and sources
+
+Conversation memory is managed by RAGApplication.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from operator import itemgetter
 
 from langchain_core.documents import Document
@@ -22,7 +24,6 @@ from langchain_openai import ChatOpenAI
 from rag.config import Config
 from rag.context_compressor import ContextCompressor
 from rag.logger import get_logger
-from rag.memory import ConversationMemory
 from rag.prompt import PromptFactory
 from rag.utils import format_documents
 
@@ -32,18 +33,18 @@ logger = get_logger(__name__)
 class RAGChain:
     """
     Production Retrieval-Augmented Generation chain.
+
+    The chain is stateless with respect to conversation memory.
+    Callers provide the formatted history for each request.
     """
 
     def __init__(
         self,
         retriever,
         reranker,
-        memory: ConversationMemory,
-    ):
-
+    ) -> None:
         self.retriever = retriever
         self.reranker = reranker
-        self.memory = memory
         self.compressor = ContextCompressor()
 
         self.llm = ChatOpenAI(
@@ -52,7 +53,6 @@ class RAGChain:
         )
 
         self.prompt = PromptFactory.create()
-
         self.chain = self._build_chain()
 
     # ---------------------------------------------------------
@@ -97,25 +97,10 @@ class RAGChain:
         )
 
     # ---------------------------------------------------------
-    # Conversation History
-    # ---------------------------------------------------------
-
-    def _history(
-        self,
-        _: dict,
-    ) -> str:
-        """
-        Return formatted conversation history.
-        """
-
-        return self.memory.formatted_history()
-
-    # ---------------------------------------------------------
     # Build LCEL Chain
     # ---------------------------------------------------------
 
     def _build_chain(self):
-
         context_chain = (
             RunnableParallel(
                 documents=itemgetter("documents"),
@@ -123,11 +108,9 @@ class RAGChain:
             | RunnableLambda(self._prepare_context)
         )
 
-        history_chain = RunnableLambda(self._history)
-
         return (
             {
-                "history": history_chain,
+                "history": itemgetter("history"),
                 "context": context_chain,
                 "question": itemgetter("question"),
             }
@@ -144,9 +127,10 @@ class RAGChain:
         self,
         question: str,
         documents: list[Document],
+        history: str = "",
     ) -> tuple[str, list[Document]]:
         """
-        Shared generation logic.
+        Generate an answer using caller-provided history.
         """
 
         logger.info(
@@ -160,7 +144,6 @@ class RAGChain:
         )
 
         if not documents:
-
             logger.warning(
                 "No document passed reranker threshold."
             )
@@ -170,20 +153,15 @@ class RAGChain:
                 "in the knowledge base to answer your question."
             )
 
-            self.memory.add_user_message(question)
-            self.memory.add_ai_message(answer)
-
             return answer, []
 
         answer = self.chain.invoke(
             {
                 "question": question,
                 "documents": documents,
+                "history": history,
             }
         )
-
-        self.memory.add_user_message(question)
-        self.memory.add_ai_message(answer)
 
         logger.info(
             "Answer generated."
@@ -199,14 +177,16 @@ class RAGChain:
         self,
         question: str,
         documents: list[Document],
+        history: str = "",
     ) -> str:
         """
         Generate an answer only.
         """
 
         answer, _ = self._generate(
-            question,
-            documents,
+            question=question,
+            documents=documents,
+            history=history,
         )
 
         return answer
@@ -219,9 +199,10 @@ class RAGChain:
         self,
         question: str,
         documents: list[Document],
-    ):
+        history: str = "",
+    ) -> Iterator[str]:
         """
-        Stream the generated answer.
+        Stream an answer using caller-provided history.
         """
 
         logger.info(
@@ -235,26 +216,19 @@ class RAGChain:
         )
 
         if not documents:
-
             yield (
                 "I couldn't find any relevant information "
                 "in the knowledge base to answer your question."
             )
             return
 
-        answer = ""
-
-        for chunk in self.chain.stream(
+        yield from self.chain.stream(
             {
                 "question": question,
                 "documents": documents,
+                "history": history,
             }
-        ):
-            answer += chunk
-            yield chunk
-
-        self.memory.add_user_message(question)
-        self.memory.add_ai_message(answer)
+        )
 
     # ---------------------------------------------------------
     # Retrieve Only
@@ -280,14 +254,16 @@ class RAGChain:
         self,
         question: str,
         documents: list[Document],
+        history: str = "",
     ) -> dict:
         """
         Return answer, documents, and sources.
         """
 
         answer, documents = self._generate(
-            question,
-            documents,
+            question=question,
+            documents=documents,
+            history=history,
         )
 
         return {

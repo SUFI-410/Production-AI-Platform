@@ -86,6 +86,34 @@ class Config:
     CACHE_TTL = 3600
 
     # ------------------------------------------------------------------
+    # Conversation Sessions
+    # ------------------------------------------------------------------
+
+    # Inactive session lifetime in seconds.
+    SESSION_TTL = int(
+        os.getenv(
+            "SESSION_TTL",
+            "3600",
+        )
+    )
+
+    # Maximum number of conversation sessions kept in memory.
+    SESSION_MAX_SESSIONS = int(
+        os.getenv(
+            "SESSION_MAX_SESSIONS",
+            "1000",
+        )
+    )
+
+    # Maximum number of user/assistant messages per session.
+    SESSION_MAX_MESSAGES = int(
+        os.getenv(
+            "SESSION_MAX_MESSAGES",
+            "10",
+        )
+    )
+
+    # ------------------------------------------------------------------
     # Logging
     # ------------------------------------------------------------------
 

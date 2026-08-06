@@ -51,6 +51,8 @@ def chat(
 
         result = app.ask_with_sources(
             question=payload.question,
+            session_id=payload.session_id,
+            use_cache=payload.use_cache,
         )
 
         latency_ms = (
@@ -60,6 +62,7 @@ def chat(
         return ChatResponse(
             answer=result["answer"],
             sources=result["sources"],
+            session_id=result["session_id"],
             cached=result.get("cached", False),
             grounded=result.get("grounded", True),
             latency_ms=round(latency_ms, 2),
