@@ -5,6 +5,7 @@ FastAPI route definitions.
 from __future__ import annotations
 
 import time
+import uuid
 
 from fastapi import (
     APIRouter,
@@ -21,6 +22,14 @@ from rag.logger import get_logger
 logger = get_logger(__name__)
 
 router = APIRouter(tags=["RAG"])
+
+
+def _new_session_id() -> str:
+    """
+    Generate a unique conversation session identifier.
+    """
+
+    return uuid.uuid4().hex
 
 
 @router.post(
@@ -49,9 +58,15 @@ def chat(
     try:
         app = get_application()
 
+        session_id = (
+            payload.session_id
+            if payload.session_id is not None
+            else _new_session_id()
+        )
+
         result = app.ask_with_sources(
             question=payload.question,
-            session_id=payload.session_id,
+            session_id=session_id,
             use_cache=payload.use_cache,
         )
 
