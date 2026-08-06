@@ -36,7 +36,12 @@ class ChatRequest(BaseModel):
 
     session_id: str | None = Field(
         default=None,
-        description="Optional conversation/session identifier.",
+        min_length=1,
+        max_length=128,
+        description=(
+            "Optional conversation identifier. "
+            "A server-generated identifier is returned when omitted."
+        ),
         examples=["user-123"],
     )
 
@@ -84,6 +89,14 @@ class ChatResponse(BaseModel):
         description="Retrieved supporting sources.",
     )
 
+    session_id: str = Field(
+        ...,
+        description=(
+            "Conversation identifier used for this request. "
+            "Send it with subsequent requests to preserve history."
+        ),
+    )
+
     cached: bool = Field(
         default=False,
         description="True if the answer came from the response cache.",
@@ -104,7 +117,10 @@ class ChatResponse(BaseModel):
         extra="forbid",
         json_schema_extra={
             "example": {
-                "answer": "A decorator is a callable that wraps another function.",
+                "answer": (
+                    "A decorator is a callable that wraps "
+                    "another function."
+                ),
                 "sources": [
                     {
                         "document": "python_decorators.md",
@@ -115,6 +131,7 @@ class ChatResponse(BaseModel):
                         },
                     }
                 ],
+                "session_id": "user-123",
                 "cached": False,
                 "grounded": True,
                 "latency_ms": 842.6,
