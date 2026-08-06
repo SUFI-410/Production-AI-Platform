@@ -150,6 +150,12 @@ def test_chat_returns_generated_session_id_when_omitted(
         lambda: fake_application,
     )
 
+    monkeypatch.setattr(
+        routes_module,
+        "_new_session_id",
+        lambda: "server-generated-session",
+    )
+
     client = TestClient(app)
 
     response = client.post(
@@ -165,7 +171,7 @@ def test_chat_returns_generated_session_id_when_omitted(
     assert fake_application.calls == [
         {
             "question": "What is polymorphism?",
-            "session_id": None,
+            "session_id": "server-generated-session",
             "use_cache": True,
         }
     ]
@@ -175,6 +181,7 @@ def test_chat_returns_generated_session_id_when_omitted(
     assert body["session_id"] == (
         "server-generated-session"
     )
+
     assert body["answer"] == (
         "answer::What is polymorphism?"
     )
