@@ -295,6 +295,87 @@ def test_cache_hit_updates_session_memory() -> None:
             },
         ]
 
+def test_repeated_standalone_question_uses_cache() -> None:
+    application, chain, query_rewriter = (
+        build_application()
+    )
+
+    first_result = application.ask_with_sources(
+        question="What is inheritance in Python?",
+        session_id="repeat-session",
+        use_cache=True,
+    )
+
+    second_result = application.ask_with_sources(
+        question="What is inheritance in Python?",
+        session_id="repeat-session",
+        use_cache=True,
+    )
+
+    assert first_result["cached"] is False
+    assert second_result["cached"] is True
+
+    assert second_result["answer"] == (
+        first_result["answer"]
+    )
+
+    assert len(chain.retrieve_calls) == 1
+    assert len(chain.ask_calls) == 1
+
+    assert query_rewriter.calls == []
+
+    with application.memory_store.session(
+        "repeat-session"
+    ) as memory:
+        messages = memory.get_messages()
+
+    assert len(messages) == 4
+
+
+def test_contextual_question_remains_history_aware() -> None:
+    application, chain, query_rewriter = (
+        build_application()
+    )
+
+    application.ask_with_sources(
+        question="What is inheritance in Python?",
+        session_id="context-session",
+        use_cache=False,
+    )
+
+    first_follow_up = application.ask_with_sources(
+        question="Give me a simple example of it?",
+        session_id="context-session",
+        use_cache=True,
+    )
+
+    application.ask_with_sources(
+        question="What is a decorator in Python?",
+        session_id="context-session",
+        use_cache=False,
+    )
+
+    second_follow_up = application.ask_with_sources(
+        question="Give me a simple example of it?",
+        session_id="context-session",
+        use_cache=True,
+    )
+
+    assert first_follow_up["cached"] is False
+    assert second_follow_up["cached"] is False
+
+    assert len(chain.retrieve_calls) == 4
+    assert len(chain.ask_calls) == 4
+
+    assert len(query_rewriter.calls) == 2
+
+    first_history = query_rewriter.calls[0][1]
+    second_history = query_rewriter.calls[1][1]
+
+    assert first_history != second_history
+    assert "inheritance" in first_history
+    assert "decorator" in second_history
+
 
 def test_use_cache_false_bypasses_cached_response() -> None:
     application, chain, _ = build_application()

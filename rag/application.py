@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from pathlib import Path
 
@@ -115,6 +116,84 @@ class RAGApplication:
             history=history,
         )
 
+    def _requires_conversation_context(
+        self,
+        question: str,
+    ) -> bool:
+        """
+        Return True when a question likely refers to earlier chat.
+
+        The detection is intentionally conservative. Marking a
+        standalone question as contextual only reduces cache reuse,
+        while treating a contextual question as standalone could
+        return an answer from the wrong conversation point.
+        """
+
+        normalized_question = " ".join(
+            question.casefold().split()
+        )
+
+        tokens = set(
+            re.findall(
+                r"[a-z0-9']+",
+                normalized_question,
+            )
+        )
+
+        contextual_tokens = {
+            "it",
+            "its",
+            "this",
+            "that",
+            "these",
+            "those",
+            "they",
+            "them",
+            "their",
+            "theirs",
+            "he",
+            "him",
+            "his",
+            "she",
+            "her",
+            "hers",
+            "former",
+            "latter",
+        }
+
+        if tokens & contextual_tokens:
+            return True
+
+        contextual_phrases = (
+            "what about",
+            "how about",
+            "follow-up",
+            "follow up",
+            "you said",
+            "you mentioned",
+            "you explained",
+            "just explained",
+            "the above",
+            "the previous",
+            "the earlier",
+            "the concept",
+            "this concept",
+            "that concept",
+            "same thing",
+            "same example",
+            "another example",
+            "tell me more",
+            "explain again",
+            "first one",
+            "second one",
+            "last one",
+        )
+
+        return any(
+            phrase in normalized_question
+            for phrase in contextual_phrases
+        )
+
     def _cache_key(
         self,
         question: str,
@@ -131,7 +210,9 @@ class RAGApplication:
 
         payload = {
             "session_id": session_id,
-            "question": question.strip(),
+            "question": " ".join(
+                question.casefold().split()
+            ),
             "metadata_filter": metadata_filter or {},
             "history": history,
         }
@@ -398,11 +479,29 @@ class RAGApplication:
         ) as memory:
             history = memory.formatted_history()
 
+            requires_context = (
+                self._requires_conversation_context(
+                    question
+                )
+            )
+
+            effective_history = (
+                history
+                if requires_context
+                else ""
+            )
+
+            if history and not requires_context:
+                logger.info(
+                    "Standalone question detected; "
+                    "conversation history ignored."
+                )
+
             cache_key = self._cache_key(
                 question=question,
                 metadata_filter=metadata_filter,
                 session_id=resolved_session_id,
-                history=history,
+                history=effective_history,
             )
 
             logger.info("Cache Key : %r", cache_key)
@@ -436,7 +535,7 @@ class RAGApplication:
 
             result = self._generate_response(
                 question=question,
-                history=history,
+                history=effective_history,
                 metadata_filter=metadata_filter,
             )
 
