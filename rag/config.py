@@ -128,8 +128,8 @@ class Config:
     # ------------------------------------------------------------------
 
     USER_AGENT = (
-        "Production-RAG/1.0 "
-        "(https://github.com/yourusername/production-rag)"
+        "Production-AI-Platform/1.0 "
+        "(https://github.com/SUFI-410/Production-AI-Platform)"
     )
 
     REQUEST_TIMEOUT = 30
