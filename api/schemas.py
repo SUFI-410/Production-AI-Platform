@@ -31,7 +31,10 @@ class ChatRequest(BaseModel):
         ...,
         min_length=1,
         max_length=2048,
-        description="Single-use Cloudflare Turnstile verification token.",
+        description=(
+            "Single-use Cloudflare Turnstile "
+            "verification token."
+        ),
     )
 
     session_id: str | None = Field(
@@ -40,14 +43,17 @@ class ChatRequest(BaseModel):
         max_length=128,
         description=(
             "Optional conversation identifier. "
-            "A server-generated identifier is returned when omitted."
+            "A server-generated identifier is returned "
+            "when omitted."
         ),
         examples=["user-123"],
     )
 
     use_cache: bool = Field(
         default=True,
-        description="Whether cached responses may be used.",
+        description=(
+            "Whether cached responses may be used."
+        ),
     )
 
 
@@ -93,24 +99,32 @@ class ChatResponse(BaseModel):
         ...,
         description=(
             "Conversation identifier used for this request. "
-            "Send it with subsequent requests to preserve history."
+            "Send it with subsequent requests to preserve "
+            "history."
         ),
     )
 
     cached: bool = Field(
         default=False,
-        description="True if the answer came from the response cache.",
+        description=(
+            "True if the answer came from the response cache."
+        ),
     )
 
     grounded: bool = Field(
-        default=True,
-        description="Whether the answer passed groundedness validation.",
+        default=False,
+        description=(
+            "Whether the answer is supported by returned "
+            "knowledge-base sources and is not a refusal."
+        ),
     )
 
     latency_ms: float = Field(
         ...,
         ge=0,
-        description="End-to-end processing time in milliseconds.",
+        description=(
+            "End-to-end processing time in milliseconds."
+        ),
     )
 
     model_config = ConfigDict(

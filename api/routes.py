@@ -79,7 +79,9 @@ def chat(
             sources=result["sources"],
             session_id=result["session_id"],
             cached=result.get("cached", False),
-            grounded=result.get("grounded", True),
+            grounded=bool(
+                result.get("grounded", False)
+            ),
             latency_ms=round(latency_ms, 2),
         )
 

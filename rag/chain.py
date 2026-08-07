@@ -18,7 +18,10 @@ from operator import itemgetter
 
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnableLambda, RunnableParallel
+from langchain_core.runnables import (
+    RunnableLambda,
+    RunnableParallel,
+)
 from langchain_openai import ChatOpenAI
 
 from rag.config import Config
@@ -28,6 +31,23 @@ from rag.prompt import PromptFactory
 from rag.utils import format_documents
 
 logger = get_logger(__name__)
+
+NO_RELEVANT_INFORMATION_ANSWER = (
+    "I couldn't find any relevant information "
+    "in the knowledge base to answer your question."
+)
+
+INSUFFICIENT_CONTEXT_ANSWER = (
+    "I don't have enough information in the "
+    "provided documents to answer that."
+)
+
+REFUSAL_ANSWER_MARKERS = (
+    "i couldn't find any relevant information "
+    "in the knowledge base",
+    "i don't have enough information in the "
+    "provided documents",
+)
 
 
 class RAGChain:
@@ -120,6 +140,27 @@ class RAGChain:
         )
 
     # ---------------------------------------------------------
+    # Refusal Detection
+    # ---------------------------------------------------------
+
+    @staticmethod
+    def _is_refusal_answer(
+        answer: str,
+    ) -> bool:
+        """
+        Return True for known knowledge-base refusal answers.
+        """
+
+        normalized_answer = " ".join(
+            answer.casefold().split()
+        )
+
+        return any(
+            marker in normalized_answer
+            for marker in REFUSAL_ANSWER_MARKERS
+        )
+
+    # ---------------------------------------------------------
     # Core Generation
     # ---------------------------------------------------------
 
@@ -148,12 +189,7 @@ class RAGChain:
                 "No document passed reranker threshold."
             )
 
-            answer = (
-                "I couldn't find any relevant information "
-                "in the knowledge base to answer your question."
-            )
-
-            return answer, []
+            return NO_RELEVANT_INFORMATION_ANSWER, []
 
         answer = self.chain.invoke(
             {
@@ -216,10 +252,7 @@ class RAGChain:
         )
 
         if not documents:
-            yield (
-                "I couldn't find any relevant information "
-                "in the knowledge base to answer your question."
-            )
+            yield NO_RELEVANT_INFORMATION_ANSWER
             return
 
         yield from self.chain.stream(
@@ -257,7 +290,7 @@ class RAGChain:
         history: str = "",
     ) -> dict:
         """
-        Return answer, documents, and sources.
+        Return answer, documents, sources, and groundedness.
         """
 
         answer, documents = self._generate(
@@ -266,6 +299,14 @@ class RAGChain:
             history=history,
         )
 
+        if self._is_refusal_answer(answer):
+            logger.info(
+                "Knowledge-base refusal detected; "
+                "supporting sources omitted."
+            )
+
+            documents = []
+
         return {
             "question": question,
             "answer": answer,
@@ -273,4 +314,5 @@ class RAGChain:
             "sources": self.retriever.sources(
                 documents
             ),
+            "grounded": bool(documents),
         }
