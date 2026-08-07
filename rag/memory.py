@@ -93,6 +93,43 @@ class ConversationMemory:
                 }
             )
 
+    def latest_exchange_matches(
+        self,
+        user_message: str,
+        assistant_message: str,
+    ) -> bool:
+        """
+        Return True when the latest complete exchange matches.
+
+        Comparison ignores case and repeated whitespace so
+        equivalent cached questions do not consume memory twice.
+        """
+
+        def normalize(value: str) -> str:
+            return " ".join(
+                value.casefold().split()
+            )
+
+        with self._lock:
+            if len(self.messages) < 2:
+                return False
+
+            user_entry = self.messages[-2]
+            assistant_entry = self.messages[-1]
+
+            if (
+                user_entry["role"] != "user"
+                or assistant_entry["role"] != "assistant"
+            ):
+                return False
+
+            return (
+                normalize(user_entry["content"])
+                == normalize(user_message)
+                and normalize(assistant_entry["content"])
+                == normalize(assistant_message)
+            )
+
     # ---------------------------------------------------------
     # Read Memory
     # ---------------------------------------------------------

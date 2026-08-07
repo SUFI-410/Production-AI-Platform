@@ -520,10 +520,24 @@ class RAGApplication:
                     result["cached"] = True
                     result["session_id"] = resolved_session_id
 
-                    memory.add_exchange(
-                        user_message=question,
-                        assistant_message=result["answer"],
+                    duplicate_standalone_exchange = (
+                        not requires_context
+                        and memory.latest_exchange_matches(
+                            user_message=question,
+                            assistant_message=result["answer"],
+                        )
                     )
+
+                    if duplicate_standalone_exchange:
+                        logger.info(
+                            "Duplicate standalone cache hit; "
+                            "conversation memory unchanged."
+                        )
+                    else:
+                        memory.add_exchange(
+                            user_message=question,
+                            assistant_message=result["answer"],
+                        )
 
                     logger.info("=" * 70)
 

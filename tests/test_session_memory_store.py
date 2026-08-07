@@ -7,6 +7,7 @@ from pytest import MonkeyPatch
 
 import rag.memory as memory_module
 from rag.memory import (
+    ConversationMemory,
     SessionCapacityError,
     SessionMemoryStore,
 )
@@ -238,6 +239,7 @@ def test_same_session_requests_are_serialized() -> None:
         target=first_request,
         name="first-shared-request",
     )
+
     second_thread = threading.Thread(
         target=second_request,
         name="second-shared-request",
@@ -302,6 +304,7 @@ def test_different_sessions_can_run_concurrently() -> None:
         target=first_request,
         name="session-a-request",
     )
+
     second_thread = threading.Thread(
         target=second_request,
         name="session-b-request",
@@ -323,3 +326,24 @@ def test_different_sessions_can_run_concurrently() -> None:
             join_thread(second_thread)
 
     assert errors == []
+
+
+def test_latest_exchange_matches_normalized_content() -> None:
+    memory = ConversationMemory(
+        max_messages=10
+    )
+
+    memory.add_exchange(
+        user_message="What is inheritance in Python?",
+        assistant_message="Inheritance answer.",
+    )
+
+    assert memory.latest_exchange_matches(
+        user_message="  what IS inheritance in   Python? ",
+        assistant_message="Inheritance answer.",
+    )
+
+    assert not memory.latest_exchange_matches(
+        user_message="What is a decorator in Python?",
+        assistant_message="Decorator answer.",
+    )
