@@ -295,7 +295,8 @@ def test_cache_hit_updates_session_memory() -> None:
             },
         ]
 
-def test_repeated_standalone_question_uses_cache() -> None:
+
+def test_repeated_standalone_cache_hit_does_not_duplicate_memory() -> None:
     application, chain, query_rewriter = (
         build_application()
     )
@@ -329,7 +330,78 @@ def test_repeated_standalone_question_uses_cache() -> None:
     ) as memory:
         messages = memory.get_messages()
 
-    assert len(messages) == 4
+    assert len(messages) == 2
+
+    assert messages == [
+        {
+            "role": "user",
+            "content": "What is inheritance in Python?",
+        },
+        {
+            "role": "assistant",
+            "content": first_result["answer"],
+        },
+    ]
+
+
+def test_cached_standalone_topic_change_updates_memory() -> None:
+    application, chain, query_rewriter = (
+        build_application()
+    )
+
+    inheritance_result = application.ask_with_sources(
+        question="What is inheritance in Python?",
+        session_id="topic-session",
+        use_cache=True,
+    )
+
+    decorator_result = application.ask_with_sources(
+        question="What is a decorator in Python?",
+        session_id="topic-session",
+        use_cache=True,
+    )
+
+    cached_inheritance_result = application.ask_with_sources(
+        question="What is inheritance in Python?",
+        session_id="topic-session",
+        use_cache=True,
+    )
+
+    follow_up = application.ask_with_sources(
+        question="Give me an example of it?",
+        session_id="topic-session",
+        use_cache=False,
+    )
+
+    assert inheritance_result["cached"] is False
+    assert decorator_result["cached"] is False
+    assert cached_inheritance_result["cached"] is True
+    assert follow_up["cached"] is False
+
+    assert len(chain.retrieve_calls) == 3
+    assert len(chain.ask_calls) == 3
+
+    assert len(query_rewriter.calls) == 1
+
+    rewritten_question, history = (
+        query_rewriter.calls[0]
+    )
+
+    assert rewritten_question == (
+        "Give me an example of it?"
+    )
+
+    assert (
+        "What is inheritance in Python?"
+        in history
+    )
+
+    assert inheritance_result["answer"] in history
+
+    assert (
+        "What is a decorator in Python?"
+        in history
+    )
 
 
 def test_contextual_question_remains_history_aware() -> None:
