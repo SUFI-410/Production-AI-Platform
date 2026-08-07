@@ -71,7 +71,7 @@ class Source(BaseModel):
         ...,
         ge=0.0,
         le=1.0,
-        description="Normalized retrieval score.",
+        description="Cross-encoder relevance score.",
     )
 
     metadata: dict[str, Any] = Field(
