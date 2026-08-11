@@ -18,6 +18,7 @@ from pydantic import (
     ConfigDict,
     EmailStr,
     Field,
+    field_validator,
 )
 
 
@@ -49,6 +50,26 @@ class RegisterRequest(BaseModel):
             "Must contain at least 12 characters."
         ),
     )
+
+    @field_validator("organization_name")
+    @classmethod
+    def validate_organization_name(
+        cls,
+        value: str,
+    ) -> str:
+        """
+        Normalize and validate the organization name.
+        """
+
+        value = value.strip()
+
+        if len(value) < 2:
+            raise ValueError(
+                "Organization name must contain "
+                "at least 2 characters."
+            )
+
+        return value
 
 
 class LoginRequest(BaseModel):

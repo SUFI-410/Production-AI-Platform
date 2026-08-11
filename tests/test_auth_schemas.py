@@ -42,6 +42,15 @@ def test_register_request_rejects_short_password() -> None:
         )
 
 
+def test_register_request_rejects_blank_organization_name() -> None:
+    with pytest.raises(ValidationError):
+        RegisterRequest(
+            organization_name="   ",
+            email="owner@example.com",
+            password="StrongPassword123!",
+        )
+
+
 def test_login_request_accepts_valid_input() -> None:
     request = LoginRequest(
         email="owner@example.com",
