@@ -9,6 +9,7 @@ on:
   pull_request:
     branches:
       - main
+      - develop
 
 jobs:
   lint:
@@ -56,14 +57,18 @@ jobs:
 
       - name: Verify Container
         run: |
-          docker run --rm production-ai-platform:latest python -c "from api.main import app; print('✅ FastAPI application loaded successfully')"
+          docker run --rm \
+            -e OPENAI_API_KEY=test-openai-key \
+            -e DATABASE_URL=postgresql+psycopg://rag_user:test_password@localhost:5432/rag_platform \
+            -e JWT_SECRET_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+            production-ai-platform:latest \
+            python -c "from api.main import app; print('FastAPI application loaded successfully')"
 
   deploy:
     name: Deploy to Oracle Cloud
     runs-on: ubuntu-latest
     needs: docker-build
 
-    # Deploy ONLY when pushing to main
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
