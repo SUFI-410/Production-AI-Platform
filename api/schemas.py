@@ -2,6 +2,7 @@
 Pydantic request and response schemas for the Production AI Platform API.
 
 Responsibilities:
+
 - Validate incoming client requests.
 - Define consistent API response models.
 - Provide automatic OpenAPI documentation.
@@ -10,8 +11,94 @@ Responsibilities:
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+)
+
+
+class RegisterRequest(BaseModel):
+    """
+    Request payload for creating an organization and its first user.
+    """
+
+    organization_name: str = Field(
+        ...,
+        min_length=2,
+        max_length=255,
+        description="Name of the organization to create.",
+        examples=["Acme AI"],
+    )
+
+    email: EmailStr = Field(
+        ...,
+        description="Email address for the new user.",
+        examples=["owner@example.com"],
+    )
+
+    password: str = Field(
+        ...,
+        min_length=12,
+        max_length=128,
+        description=(
+            "Password for the new account. "
+            "Must contain at least 12 characters."
+        ),
+    )
+
+
+class LoginRequest(BaseModel):
+    """
+    Request payload for authenticating an existing user.
+    """
+
+    email: EmailStr = Field(
+        ...,
+        description="Account email address.",
+        examples=["owner@example.com"],
+    )
+
+    password: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        description="Account password.",
+    )
+
+
+class TokenResponse(BaseModel):
+    """
+    Bearer access token returned after successful authentication.
+    """
+
+    access_token: str = Field(
+        ...,
+        description="Signed JWT access token.",
+    )
+
+    token_type: str = Field(
+        default="bearer",
+        description="Authentication scheme for the token.",
+    )
+
+
+class UserResponse(BaseModel):
+    """
+    Public representation of an authenticated user.
+    """
+
+    id: UUID
+    organization_id: UUID
+    email: EmailStr
+    is_active: bool
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
 
 
 class ChatRequest(BaseModel):
