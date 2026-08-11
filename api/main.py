@@ -4,6 +4,9 @@ FastAPI application entry point.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -11,6 +14,19 @@ from api.auth_routes import router as auth_router
 from api.routes import router
 from api.schemas import HealthResponse
 from rag.config import Config
+
+
+@asynccontextmanager
+async def lifespan(
+    app: FastAPI,
+) -> AsyncIterator[None]:
+    """
+    Validate required configuration when the API starts.
+    """
+
+    Config.validate_api()
+
+    yield
 
 
 app = FastAPI(
@@ -22,6 +38,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 

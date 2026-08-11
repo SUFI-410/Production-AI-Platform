@@ -191,3 +191,38 @@ class Config:
             parents=True,
             exist_ok=True,
         )
+
+    @classmethod
+    def validate_api(cls) -> None:
+        """
+        Validate configuration required by the FastAPI service.
+        """
+
+        missing: list[str] = []
+
+        if not cls.OPENAI_API_KEY:
+            missing.append("OPENAI_API_KEY")
+
+        if not cls.DATABASE_URL:
+            missing.append("DATABASE_URL")
+
+        if not cls.JWT_SECRET_KEY:
+            missing.append("JWT_SECRET_KEY")
+
+        if missing:
+            missing_values = ", ".join(missing)
+
+            raise RuntimeError(
+                "Missing required API configuration: "
+                f"{missing_values}"
+            )
+
+        cls.CHROMA_DIR.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        cls.LOG_DIR.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
