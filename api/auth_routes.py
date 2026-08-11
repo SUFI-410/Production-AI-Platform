@@ -14,7 +14,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from api.dependencies import get_current_user, get_db
+from api.dependencies import (
+    get_current_organization,
+    get_current_user,
+    get_db,
+)
 from api.schemas import (
     LoginRequest,
     RegisterRequest,
@@ -68,7 +72,9 @@ def register(
     if existing_user is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email already exists.",
+            detail=(
+                "An account with this email already exists."
+            ),
         )
 
     organization = Organization(
@@ -96,7 +102,9 @@ def register(
 
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email already exists.",
+            detail=(
+                "An account with this email already exists."
+            ),
         ) from None
 
     return TokenResponse(
@@ -156,7 +164,15 @@ def get_me(
         User,
         Depends(get_current_user),
     ],
+    _current_organization: Annotated[
+        Organization,
+        Depends(get_current_organization),
+    ],
 ) -> User:
-    """Return the currently authenticated user."""
+    """
+    Return the currently authenticated user.
+
+    A valid organization membership is required.
+    """
 
     return current_user

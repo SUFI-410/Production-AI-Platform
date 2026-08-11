@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import jwt
 import pytest
-from jwt import InvalidTokenError
+from jwt import ExpiredSignatureError, InvalidTokenError
 
 from rag.config import Config
 from rag.security import (
@@ -10,6 +10,15 @@ from rag.security import (
     decode_access_token,
     hash_password,
     verify_password,
+)
+
+
+TEST_JWT_SECRET = (
+    "test-jwt-secret-key-that-is-at-least-32-bytes"
+)
+
+WRONG_JWT_SECRET = (
+    "wrong-jwt-secret-key-that-is-at-least-32-bytes"
 )
 
 
@@ -38,7 +47,15 @@ def test_verify_password_rejects_wrong_password() -> None:
     )
 
 
-def test_access_token_round_trip() -> None:
+def test_access_token_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        Config,
+        "JWT_SECRET_KEY",
+        TEST_JWT_SECRET,
+    )
+
     token = create_access_token("user-123")
 
     payload = decode_access_token(token)
@@ -49,7 +66,15 @@ def test_access_token_round_trip() -> None:
     assert "exp" in payload
 
 
-def test_access_token_rejects_invalid_signature() -> None:
+def test_access_token_rejects_invalid_signature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        Config,
+        "JWT_SECRET_KEY",
+        TEST_JWT_SECRET,
+    )
+
     token = jwt.encode(
         {
             "sub": "user-123",
@@ -57,7 +82,7 @@ def test_access_token_rejects_invalid_signature() -> None:
             "exp": 4102444800,
             "type": "access",
         },
-        "x" * 32,
+        WRONG_JWT_SECRET,
         algorithm=Config.JWT_ALGORITHM,
     )
 
@@ -65,9 +90,14 @@ def test_access_token_rejects_invalid_signature() -> None:
         decode_access_token(token)
 
 
-def test_access_token_rejects_wrong_type() -> None:
-    if not Config.JWT_SECRET_KEY:
-        pytest.fail("JWT_SECRET_KEY is not configured.")
+def test_access_token_rejects_wrong_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        Config,
+        "JWT_SECRET_KEY",
+        TEST_JWT_SECRET,
+    )
 
     token = jwt.encode(
         {
@@ -76,7 +106,7 @@ def test_access_token_rejects_wrong_type() -> None:
             "exp": 4102444800,
             "type": "refresh",
         },
-        Config.JWT_SECRET_KEY,
+        TEST_JWT_SECRET,
         algorithm=Config.JWT_ALGORITHM,
     )
 
@@ -85,3 +115,43 @@ def test_access_token_rejects_wrong_type() -> None:
         match="Invalid token type",
     ):
         decode_access_token(token)
+
+
+def test_access_token_rejects_expired_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        Config,
+        "JWT_SECRET_KEY",
+        TEST_JWT_SECRET,
+    )
+
+    token = jwt.encode(
+        {
+            "sub": "user-123",
+            "iat": 1,
+            "exp": 2,
+            "type": "access",
+        },
+        TEST_JWT_SECRET,
+        algorithm=Config.JWT_ALGORITHM,
+    )
+
+    with pytest.raises(ExpiredSignatureError):
+        decode_access_token(token)
+
+
+def test_access_token_requires_signing_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        Config,
+        "JWT_SECRET_KEY",
+        None,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="JWT_SECRET_KEY is not configured",
+    ):
+        create_access_token("user-123")

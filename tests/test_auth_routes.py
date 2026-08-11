@@ -5,12 +5,17 @@ from typing import Any, cast
 from uuid import UUID
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import api.auth_routes as auth_routes_module
-from api.dependencies import get_current_user, get_db
+from api.dependencies import (
+    get_current_organization,
+    get_current_user,
+    get_db,
+)
 from api.main import app
 from rag.models import Organization, User
 
@@ -18,6 +23,7 @@ from rag.models import Organization, User
 ORGANIZATION_ID = UUID(
     "22222222-2222-2222-2222-222222222222"
 )
+
 USER_ID = UUID(
     "11111111-1111-1111-1111-111111111111"
 )
@@ -104,6 +110,13 @@ def _make_user(
         email="owner@example.com",
         password_hash="stored-password-hash",
         is_active=is_active,
+    )
+
+
+def _make_organization() -> Organization:
+    return Organization(
+        id=ORGANIZATION_ID,
+        name="Acme AI",
     )
 
 
@@ -237,6 +250,7 @@ def test_login_returns_access_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     user = _make_user()
+
     db = FakeSession(
         scalar_result=user
     )
@@ -357,10 +371,15 @@ def test_login_rejects_inactive_user() -> None:
 
 def test_me_returns_authenticated_user() -> None:
     user = _make_user()
+    organization = _make_organization()
 
     app.dependency_overrides[
         get_current_user
     ] = lambda: user
+
+    app.dependency_overrides[
+        get_current_organization
+    ] = lambda: organization
 
     client = TestClient(app)
 
@@ -393,5 +412,39 @@ def test_me_rejects_missing_bearer_token() -> None:
         "detail": (
             "Invalid or missing "
             "authentication credentials."
+        )
+    }
+
+
+def test_me_rejects_user_without_valid_organization() -> None:
+    user = _make_user()
+
+    app.dependency_overrides[
+        get_current_user
+    ] = lambda: user
+
+    def reject_organization() -> Organization:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Authenticated user is not assigned "
+                "to a valid organization."
+            ),
+        )
+
+    app.dependency_overrides[
+        get_current_organization
+    ] = reject_organization
+
+    client = TestClient(app)
+
+    response = client.get("/auth/me")
+
+    assert response.status_code == 403
+
+    assert response.json() == {
+        "detail": (
+            "Authenticated user is not assigned "
+            "to a valid organization."
         )
     }
