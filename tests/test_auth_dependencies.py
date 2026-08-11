@@ -10,10 +10,20 @@ from jwt import InvalidTokenError
 from sqlalchemy.orm import Session
 
 import api.dependencies as dependencies_module
-from api.dependencies import get_current_user
+from api.dependencies import (
+    get_current_organization,
+    get_current_user,
+)
+from rag.models import Organization, User
 
 
-USER_ID = UUID("11111111-1111-1111-1111-111111111111")
+USER_ID = UUID(
+    "11111111-1111-1111-1111-111111111111"
+)
+
+ORGANIZATION_ID = UUID(
+    "22222222-2222-2222-2222-222222222222"
+)
 
 
 class FakeUser:
@@ -21,8 +31,10 @@ class FakeUser:
         self,
         *,
         is_active: bool = True,
+        organization_id: UUID = ORGANIZATION_ID,
     ) -> None:
         self.id = USER_ID
+        self.organization_id = organization_id
         self.is_active = is_active
 
 
@@ -188,3 +200,61 @@ def test_get_current_user_rejects_inactive_user(
         )
 
     assert exc_info.value.status_code == 401
+
+
+def test_get_current_organization_returns_user_organization() -> None:
+    user = FakeUser()
+
+    organization = Organization(
+        id=ORGANIZATION_ID,
+        name="Acme AI",
+    )
+
+    class FakeOrganizationSession:
+        def get(
+            self,
+            model: Any,
+            object_id: UUID,
+        ) -> Organization | None:
+            assert model is Organization
+            assert object_id == ORGANIZATION_ID
+
+            return organization
+
+    db = FakeOrganizationSession()
+
+    result = get_current_organization(
+        current_user=cast(User, user),
+        db=cast(Session, db),
+    )
+
+    assert result is organization
+
+
+def test_get_current_organization_rejects_missing_organization() -> None:
+    user = FakeUser()
+
+    class FakeOrganizationSession:
+        def get(
+            self,
+            model: Any,
+            object_id: UUID,
+        ) -> Organization | None:
+            assert model is Organization
+            assert object_id == ORGANIZATION_ID
+
+            return None
+
+    db = FakeOrganizationSession()
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_current_organization(
+            current_user=cast(User, user),
+            db=cast(Session, db),
+        )
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == (
+        "Authenticated user is not assigned "
+        "to a valid organization."
+    )

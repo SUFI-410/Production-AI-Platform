@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from rag.application import RAGApplication
 from rag.database import SessionLocal
 from rag.logger import get_logger
-from rag.models import User
+from rag.models import Organization, User
 from rag.security import decode_access_token
 
 
@@ -95,6 +95,40 @@ def get_current_user(
         raise _unauthorized()
 
     return user
+
+
+def get_current_organization(
+    current_user: Annotated[
+        User,
+        Depends(get_current_user),
+    ],
+    db: Annotated[
+        Session,
+        Depends(get_db),
+    ],
+) -> Organization:
+    """
+    Resolve the authenticated user's organization.
+
+    Organization membership comes from the authenticated
+    PostgreSQL user record rather than from JWT claims.
+    """
+
+    organization = db.get(
+        Organization,
+        current_user.organization_id,
+    )
+
+    if organization is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Authenticated user is not assigned "
+                "to a valid organization."
+            ),
+        )
+
+    return organization
 
 
 def get_rag_application() -> RAGApplication:
