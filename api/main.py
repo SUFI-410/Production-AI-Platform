@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.auth_routes import router as auth_router
+from api.document_routes import router as document_router
 from api.routes import router
 from api.schemas import HealthResponse
 from rag.config import Config
@@ -31,10 +32,7 @@ async def lifespan(
 
 app = FastAPI(
     title="Production AI Platform",
-    description=(
-        "Production-grade Retrieval-Augmented "
-        "Generation (RAG) API."
-    ),
+    description=("Production-grade Retrieval-Augmented Generation (RAG) API."),
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
@@ -56,6 +54,7 @@ app.add_middleware(
 # Register API routes
 
 app.include_router(auth_router)
+app.include_router(document_router)
 app.include_router(router)
 
 
@@ -65,11 +64,7 @@ def root() -> dict[str, str]:
     Root endpoint.
     """
 
-    return {
-        "message": (
-            "Production AI Platform API is running."
-        )
-    }
+    return {"message": ("Production AI Platform API is running.")}
 
 
 @app.get(

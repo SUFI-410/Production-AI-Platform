@@ -10,6 +10,7 @@ Responsibilities:
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -46,8 +47,7 @@ class RegisterRequest(BaseModel):
         min_length=12,
         max_length=128,
         description=(
-            "Password for the new account. "
-            "Must contain at least 12 characters."
+            "Password for the new account. Must contain at least 12 characters."
         ),
     )
 
@@ -64,10 +64,7 @@ class RegisterRequest(BaseModel):
         value = value.strip()
 
         if len(value) < 2:
-            raise ValueError(
-                "Organization name must contain "
-                "at least 2 characters."
-            )
+            raise ValueError("Organization name must contain at least 2 characters.")
 
         return value
 
@@ -122,6 +119,26 @@ class UserResponse(BaseModel):
     )
 
 
+class DocumentResponse(BaseModel):
+    """
+    Public metadata for a tenant-owned uploaded document.
+    """
+
+    id: UUID
+    organization_id: UUID
+    uploaded_by_user_id: UUID | None
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
+
+
 class ChatRequest(BaseModel):
     """
     Request payload for the chat endpoint.
@@ -139,10 +156,7 @@ class ChatRequest(BaseModel):
         ...,
         min_length=1,
         max_length=2048,
-        description=(
-            "Single-use Cloudflare Turnstile "
-            "verification token."
-        ),
+        description=("Single-use Cloudflare Turnstile verification token."),
     )
 
     session_id: str | None = Field(
@@ -159,9 +173,7 @@ class ChatRequest(BaseModel):
 
     use_cache: bool = Field(
         default=True,
-        description=(
-            "Whether cached responses may be used."
-        ),
+        description="Whether cached responses may be used.",
     )
 
 
@@ -214,9 +226,7 @@ class ChatResponse(BaseModel):
 
     cached: bool = Field(
         default=False,
-        description=(
-            "True if the answer came from the response cache."
-        ),
+        description=("True if the answer came from the response cache."),
     )
 
     grounded: bool = Field(
@@ -230,19 +240,14 @@ class ChatResponse(BaseModel):
     latency_ms: float = Field(
         ...,
         ge=0,
-        description=(
-            "End-to-end processing time in milliseconds."
-        ),
+        description=("End-to-end processing time in milliseconds."),
     )
 
     model_config = ConfigDict(
         extra="forbid",
         json_schema_extra={
             "example": {
-                "answer": (
-                    "A decorator is a callable that wraps "
-                    "another function."
-                ),
+                "answer": ("A decorator is a callable that wraps another function."),
                 "sources": [
                     {
                         "document": "python_decorators.md",
