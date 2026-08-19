@@ -146,6 +146,41 @@ class DocumentResponse(BaseModel):
     )
 
 
+class BillingRequirementsExtractRequest(BaseModel):
+    """
+    Request for extracting billing requirements from tenant documents.
+    """
+
+    document_ids: list[UUID] = Field(
+        ...,
+        min_length=1,
+        max_length=20,
+        description=(
+            "Tenant-owned Contract, SOW, Purchase Order, or "
+            "Billing Instructions document IDs to analyze."
+        ),
+    )
+
+    @field_validator("document_ids")
+    @classmethod
+    def validate_unique_document_ids(
+        cls,
+        value: list[UUID],
+    ) -> list[UUID]:
+        """Reject duplicate document IDs."""
+
+        if len(value) != len(set(value)):
+            raise ValueError(
+                "Document IDs must be unique."
+            )
+
+        return value
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
 class ChatRequest(BaseModel):
     """
     Request payload for the chat endpoint.
