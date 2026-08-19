@@ -119,6 +119,13 @@ def test_load_markdown_enriches_tenant_metadata(
         == "contract.md"
     )
 
+    assert (
+        document.metadata[
+            "file_name"
+        ]
+        == "contract.md"
+    )
+
 
 def test_load_rejects_missing_storage_key(
     tmp_path: Path,

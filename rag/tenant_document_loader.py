@@ -74,6 +74,10 @@ class TenantDocumentLoader:
 
         The existing ``document_type`` value from DocumentLoader remains
         the physical source format, for example ``pdf`` or ``markdown``.
+
+        The customer-facing ``file_name`` is replaced with the original
+        uploaded filename so internal durable storage filenames are not
+        exposed to downstream AI or API responses.
         """
 
         for document in documents:
@@ -93,6 +97,9 @@ class TenantDocumentLoader:
                         record.document_type
                     ),
                     "original_filename": (
+                        record.original_filename
+                    ),
+                    "file_name": (
                         record.original_filename
                     ),
                 }
