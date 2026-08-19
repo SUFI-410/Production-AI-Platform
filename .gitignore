@@ -76,3 +76,8 @@ dist/
 # Evaluation output
 # ============================================
 evaluation/results/
+
+# ============================================
+# Private Tenant Document Storage
+# ============================================
+data/uploads/

@@ -32,6 +32,18 @@ class DocumentStatus(str, Enum):
     FAILED = "failed"
 
 
+class DocumentType(str, Enum):
+    """Business role of an uploaded Invoice Preflight document."""
+
+    CONTRACT = "contract"
+    SOW = "sow"
+    PURCHASE_ORDER = "purchase_order"
+    BILLING_INSTRUCTIONS = "billing_instructions"
+    INVOICE = "invoice"
+    SUPPORTING_EVIDENCE = "supporting_evidence"
+    OTHER = "other"
+
+
 class Organization(Base):
     """Tenant organization."""
 
@@ -113,6 +125,20 @@ class Document(Base):
             "status IN ('uploaded', 'processing', 'ready', 'failed')",
             name="ck_documents_status",
         ),
+        CheckConstraint(
+            (
+                "document_type IN ("
+                "'contract', "
+                "'sow', "
+                "'purchase_order', "
+                "'billing_instructions', "
+                "'invoice', "
+                "'supporting_evidence', "
+                "'other'"
+                ")"
+            ),
+            name="ck_documents_document_type",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -148,6 +174,18 @@ class Document(Base):
     size_bytes: Mapped[int] = mapped_column(
         BigInteger,
         nullable=False,
+    )
+
+    storage_key: Mapped[str | None] = mapped_column(
+        String(512),
+        nullable=True,
+    )
+
+    document_type: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=DocumentType.OTHER.value,
+        server_default=DocumentType.OTHER.value,
     )
 
     status: Mapped[str] = mapped_column(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
 
@@ -18,21 +19,31 @@ from api.dependencies import (
     get_db,
 )
 from api.main import app
+from rag.document_storage import LocalDocumentStorage
 from rag.models import (
     Document as DocumentRecord,
     DocumentStatus,
+    DocumentType,
     Organization,
     User,
 )
 
 
-USER_ID = UUID("11111111-1111-1111-1111-111111111111")
+USER_ID = UUID(
+    "11111111-1111-1111-1111-111111111111"
+)
 
-ORGANIZATION_ID = UUID("22222222-2222-2222-2222-222222222222")
+ORGANIZATION_ID = UUID(
+    "22222222-2222-2222-2222-222222222222"
+)
 
-OTHER_ORGANIZATION_ID = UUID("33333333-3333-3333-3333-333333333333")
+OTHER_ORGANIZATION_ID = UUID(
+    "33333333-3333-3333-3333-333333333333"
+)
 
-DOCUMENT_ID = UUID("44444444-4444-4444-4444-444444444444")
+DOCUMENT_ID = UUID(
+    "44444444-4444-4444-4444-444444444444"
+)
 
 CREATED_AT = datetime(
     2026,
@@ -75,7 +86,10 @@ class FakeSession:
     ) -> None:
         self.refresh_called = True
 
-        if isinstance(instance, DocumentRecord):
+        if isinstance(
+            instance,
+            DocumentRecord,
+        ):
             instance.id = DOCUMENT_ID
             instance.created_at = CREATED_AT
             instance.updated_at = CREATED_AT
@@ -84,9 +98,28 @@ class FakeSession:
         self.rollback_called = True
 
 
+@pytest.fixture
+def document_storage(
+    tmp_path: Path,
+) -> LocalDocumentStorage:
+    """
+    Provide isolated document storage for every route test.
+    """
+
+    return LocalDocumentStorage(
+        tmp_path / "uploads"
+    )
+
+
 @pytest.fixture(autouse=True)
-def clear_dependency_overrides() -> Iterator[None]:
+def clear_dependency_overrides(
+    document_storage: LocalDocumentStorage,
+) -> Iterator[None]:
     app.dependency_overrides.clear()
+
+    app.dependency_overrides[
+        document_routes_module.get_document_storage
+    ] = lambda: document_storage
 
     yield
 
@@ -113,16 +146,25 @@ def _make_organization() -> Organization:
 def _override_database(
     db: FakeSession,
 ) -> None:
-    app.dependency_overrides[get_db] = lambda: cast(Session, db)
+    app.dependency_overrides[
+        get_db
+    ] = lambda: cast(
+        Session,
+        db,
+    )
 
 
 def _override_authenticated_tenant() -> None:
     user = _make_user()
     organization = _make_organization()
 
-    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[
+        get_current_user
+    ] = lambda: user
 
-    app.dependency_overrides[get_current_organization] = lambda: organization
+    app.dependency_overrides[
+        get_current_organization
+    ] = lambda: organization
 
 
 def test_upload_markdown_creates_document_record() -> None:
@@ -133,12 +175,17 @@ def test_upload_markdown_creates_document_record() -> None:
 
     client = TestClient(app)
 
+    content = (
+        b"# Private Guide\n\n"
+        b"Tenant content."
+    )
+
     response = client.post(
         "/documents",
         files={
             "file": (
                 "guide.md",
-                b"# Private Guide\n\nTenant content.",
+                content,
                 "text/markdown",
             )
         },
@@ -148,19 +195,32 @@ def test_upload_markdown_creates_document_record() -> None:
 
     assert response.json() == {
         "id": str(DOCUMENT_ID),
-        "organization_id": str(ORGANIZATION_ID),
-        "uploaded_by_user_id": str(USER_ID),
+        "organization_id": str(
+            ORGANIZATION_ID
+        ),
+        "uploaded_by_user_id": str(
+            USER_ID
+        ),
         "original_filename": "guide.md",
         "content_type": "text/markdown",
-        "size_bytes": len(b"# Private Guide\n\nTenant content."),
-        "status": DocumentStatus.UPLOADED.value,
-        "created_at": CREATED_AT.isoformat().replace(
-            "+00:00",
-            "Z",
+        "size_bytes": len(content),
+        "document_type": (
+            DocumentType.OTHER.value
         ),
-        "updated_at": CREATED_AT.isoformat().replace(
-            "+00:00",
-            "Z",
+        "status": (
+            DocumentStatus.UPLOADED.value
+        ),
+        "created_at": (
+            CREATED_AT.isoformat().replace(
+                "+00:00",
+                "Z",
+            )
+        ),
+        "updated_at": (
+            CREATED_AT.isoformat().replace(
+                "+00:00",
+                "Z",
+            )
         ),
     }
 
@@ -177,10 +237,37 @@ def test_upload_markdown_creates_document_record() -> None:
         DocumentRecord,
     )
 
-    assert document.organization_id == ORGANIZATION_ID
-    assert document.uploaded_by_user_id == USER_ID
-    assert document.original_filename == "guide.md"
-    assert document.content_type == "text/markdown"
+    assert (
+        document.organization_id
+        == ORGANIZATION_ID
+    )
+
+    assert (
+        document.uploaded_by_user_id
+        == USER_ID
+    )
+
+    assert (
+        document.original_filename
+        == "guide.md"
+    )
+
+    assert (
+        document.content_type
+        == "text/markdown"
+    )
+
+    assert (
+        document.document_type
+        == DocumentType.OTHER.value
+    )
+
+    assert document.storage_key is not None
+
+    assert (
+        str(ORGANIZATION_ID)
+        in document.storage_key
+    )
 
 
 def test_upload_pdf_creates_document_record() -> None:
@@ -191,7 +278,10 @@ def test_upload_pdf_creates_document_record() -> None:
 
     client = TestClient(app)
 
-    pdf_content = b"%PDF-1.7\nminimal test document"
+    pdf_content = (
+        b"%PDF-1.7\n"
+        b"minimal test document"
+    )
 
     response = client.post(
         "/documents",
@@ -206,11 +296,113 @@ def test_upload_pdf_creates_document_record() -> None:
 
     assert response.status_code == 201
 
-    assert response.json()["original_filename"] == "report.pdf"
+    assert (
+        response.json()[
+            "original_filename"
+        ]
+        == "report.pdf"
+    )
 
-    assert response.json()["content_type"] == "application/pdf"
+    assert (
+        response.json()[
+            "content_type"
+        ]
+        == "application/pdf"
+    )
 
-    assert response.json()["size_bytes"] == len(pdf_content)
+    assert (
+        response.json()[
+            "size_bytes"
+        ]
+        == len(pdf_content)
+    )
+
+    assert (
+        response.json()[
+            "document_type"
+        ]
+        == DocumentType.OTHER.value
+    )
+
+
+def test_upload_accepts_document_type() -> None:
+    db = FakeSession()
+
+    _override_database(db)
+    _override_authenticated_tenant()
+
+    client = TestClient(app)
+
+    response = client.post(
+        "/documents",
+        data={
+            "document_type": (
+                DocumentType.CONTRACT.value
+            ),
+        },
+        files={
+            "file": (
+                "master-service-agreement.md",
+                (
+                    b"# Master Service Agreement\n\n"
+                    b"Net 45."
+                ),
+                "text/markdown",
+            )
+        },
+    )
+
+    assert response.status_code == 201
+
+    assert (
+        response.json()[
+            "document_type"
+        ]
+        == DocumentType.CONTRACT.value
+    )
+
+    assert len(db.added) == 1
+
+    document = db.added[0]
+
+    assert isinstance(
+        document,
+        DocumentRecord,
+    )
+
+    assert (
+        document.document_type
+        == DocumentType.CONTRACT.value
+    )
+
+    assert document.storage_key is not None
+
+
+def test_upload_rejects_invalid_document_type() -> None:
+    db = FakeSession()
+
+    _override_database(db)
+    _override_authenticated_tenant()
+
+    client = TestClient(app)
+
+    response = client.post(
+        "/documents",
+        data={
+            "document_type": "random_invalid_type",
+        },
+        files={
+            "file": (
+                "contract.md",
+                b"# Contract",
+                "text/markdown",
+            )
+        },
+    )
+
+    assert response.status_code == 422
+
+    assert db.added == []
 
 
 def test_upload_uses_authenticated_organization() -> None:
@@ -223,7 +415,11 @@ def test_upload_uses_authenticated_organization() -> None:
 
     response = client.post(
         "/documents",
-        data={"organization_id": str(OTHER_ORGANIZATION_ID)},
+        data={
+            "organization_id": str(
+                OTHER_ORGANIZATION_ID
+            )
+        },
         files={
             "file": (
                 "tenant.md",
@@ -237,9 +433,15 @@ def test_upload_uses_authenticated_organization() -> None:
 
     document = db.added[0]
 
-    assert document.organization_id == ORGANIZATION_ID
+    assert (
+        document.organization_id
+        == ORGANIZATION_ID
+    )
 
-    assert document.organization_id != OTHER_ORGANIZATION_ID
+    assert (
+        document.organization_id
+        != OTHER_ORGANIZATION_ID
+    )
 
 
 def test_upload_uses_authenticated_user_as_uploader() -> None:
@@ -265,7 +467,10 @@ def test_upload_uses_authenticated_user_as_uploader() -> None:
 
     document = db.added[0]
 
-    assert document.uploaded_by_user_id == USER_ID
+    assert (
+        document.uploaded_by_user_id
+        == USER_ID
+    )
 
 
 def test_upload_rejects_missing_authentication() -> None:
@@ -289,7 +494,10 @@ def test_upload_rejects_missing_authentication() -> None:
     assert response.status_code == 401
 
     assert response.json() == {
-        "detail": ("Invalid or missing authentication credentials.")
+        "detail": (
+            "Invalid or missing "
+            "authentication credentials."
+        )
     }
 
     assert db.added == []
@@ -301,15 +509,22 @@ def test_upload_rejects_invalid_organization() -> None:
 
     _override_database(db)
 
-    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[
+        get_current_user
+    ] = lambda: user
 
     def reject_organization() -> Organization:
         raise HTTPException(
             status_code=403,
-            detail=("Authenticated user is not assigned to a valid organization."),
+            detail=(
+                "Authenticated user is not "
+                "assigned to a valid organization."
+            ),
         )
 
-    app.dependency_overrides[get_current_organization] = reject_organization
+    app.dependency_overrides[
+        get_current_organization
+    ] = reject_organization
 
     client = TestClient(app)
 
@@ -325,6 +540,7 @@ def test_upload_rejects_invalid_organization() -> None:
     )
 
     assert response.status_code == 403
+
     assert db.added == []
 
 
@@ -349,7 +565,12 @@ def test_upload_rejects_unsupported_extension() -> None:
 
     assert response.status_code == 415
 
-    assert response.json() == {"detail": ("Only PDF and Markdown files are supported.")}
+    assert response.json() == {
+        "detail": (
+            "Only PDF and Markdown "
+            "files are supported."
+        )
+    }
 
     assert db.added == []
 
@@ -376,7 +597,10 @@ def test_upload_rejects_wrong_content_type() -> None:
     assert response.status_code == 415
 
     assert response.json() == {
-        "detail": ("The uploaded file has an unsupported content type.")
+        "detail": (
+            "The uploaded file has an "
+            "unsupported content type."
+        )
     }
 
 
@@ -401,7 +625,11 @@ def test_upload_rejects_empty_file() -> None:
 
     assert response.status_code == 400
 
-    assert response.json() == {"detail": "The uploaded file is empty."}
+    assert response.json() == {
+        "detail": (
+            "The uploaded file is empty."
+        )
+    }
 
 
 def test_upload_rejects_invalid_pdf_signature() -> None:
@@ -425,7 +653,12 @@ def test_upload_rejects_invalid_pdf_signature() -> None:
 
     assert response.status_code == 400
 
-    assert response.json() == {"detail": ("The uploaded file is not a valid PDF.")}
+    assert response.json() == {
+        "detail": (
+            "The uploaded file is not "
+            "a valid PDF."
+        )
+    }
 
 
 def test_upload_rejects_non_utf8_markdown() -> None:
@@ -449,7 +682,12 @@ def test_upload_rejects_non_utf8_markdown() -> None:
 
     assert response.status_code == 400
 
-    assert response.json() == {"detail": ("Markdown files must use UTF-8 encoding.")}
+    assert response.json() == {
+        "detail": (
+            "Markdown files must use "
+            "UTF-8 encoding."
+        )
+    }
 
 
 def test_upload_rejects_whitespace_only_markdown() -> None:
@@ -473,7 +711,12 @@ def test_upload_rejects_whitespace_only_markdown() -> None:
 
     assert response.status_code == 400
 
-    assert response.json() == {"detail": ("The uploaded Markdown file is empty.")}
+    assert response.json() == {
+        "detail": (
+            "The uploaded Markdown "
+            "file is empty."
+        )
+    }
 
 
 def test_upload_rejects_oversized_file(
@@ -506,7 +749,10 @@ def test_upload_rejects_oversized_file(
     assert response.status_code == 413
 
     assert response.json() == {
-        "detail": ("The uploaded file exceeds the 10 MiB limit.")
+        "detail": (
+            "The uploaded file exceeds "
+            "the 10 MiB limit."
+        )
     }
 
     assert db.added == []
@@ -535,13 +781,27 @@ def test_upload_sanitizes_filename_to_basename() -> None:
 
     document = db.added[0]
 
-    assert document.original_filename == "guide.md"
+    assert (
+        document.original_filename
+        == "guide.md"
+    )
 
-    assert response.json()["original_filename"] == "guide.md"
+    assert (
+        response.json()[
+            "original_filename"
+        ]
+        == "guide.md"
+    )
 
 
-def test_upload_rolls_back_database_failure() -> None:
-    db = FakeSession(commit_error=SQLAlchemyError("database failure"))
+def test_upload_rolls_back_database_failure(
+    document_storage: LocalDocumentStorage,
+) -> None:
+    db = FakeSession(
+        commit_error=SQLAlchemyError(
+            "database failure"
+        )
+    )
 
     _override_database(db)
     _override_authenticated_tenant()
@@ -561,7 +821,20 @@ def test_upload_rolls_back_database_failure() -> None:
 
     assert response.status_code == 500
 
-    assert response.json() == {"detail": ("Unable to create the document record.")}
+    assert response.json() == {
+        "detail": (
+            "Unable to create the "
+            "document record."
+        )
+    }
 
     assert db.commit_called is True
     assert db.rollback_called is True
+
+    stored_files = [
+        path
+        for path in document_storage.root_directory.rglob("*")
+        if path.is_file()
+    ]
+
+    assert stored_files == []
