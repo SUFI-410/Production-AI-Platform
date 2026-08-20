@@ -20,6 +20,7 @@ from pydantic import (
     EmailStr,
     Field,
     field_validator,
+    model_validator,
 )
 
 from rag.models import DocumentType
@@ -175,6 +176,65 @@ class BillingRequirementsExtractRequest(BaseModel):
             )
 
         return value
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class InvoicePreflightRequest(BaseModel):
+    """
+    Request for evaluating one invoice against billing documents.
+    """
+
+    billing_document_ids: list[UUID] = Field(
+        ...,
+        min_length=1,
+        max_length=20,
+        description=(
+            "Tenant-owned Contract, SOW, Purchase Order, or "
+            "Billing Instructions document IDs."
+        ),
+    )
+
+    invoice_document_id: UUID = Field(
+        ...,
+        description=(
+            "Tenant-owned invoice document ID to evaluate."
+        ),
+    )
+
+    @field_validator("billing_document_ids")
+    @classmethod
+    def validate_unique_billing_document_ids(
+        cls,
+        value: list[UUID],
+    ) -> list[UUID]:
+        """Reject duplicate billing-document IDs."""
+
+        if len(value) != len(set(value)):
+            raise ValueError(
+                "Billing document IDs must be unique."
+            )
+
+        return value
+
+    @model_validator(mode="after")
+    def validate_invoice_is_separate(
+        self,
+    ) -> InvoicePreflightRequest:
+        """Prevent one document from serving both input roles."""
+
+        if (
+            self.invoice_document_id
+            in self.billing_document_ids
+        ):
+            raise ValueError(
+                "Invoice document ID must not appear in "
+                "billing document IDs."
+            )
+
+        return self
 
     model_config = ConfigDict(
         extra="forbid",

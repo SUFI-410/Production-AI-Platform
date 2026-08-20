@@ -14,6 +14,9 @@ from api.auth_routes import router as auth_router
 from api.billing_requirement_routes import (
     router as billing_requirement_router,
 )
+from api.invoice_preflight_routes import (
+    router as invoice_preflight_router,
+)
 from api.document_routes import router as document_router
 from api.routes import router
 from api.schemas import HealthResponse
@@ -61,6 +64,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(document_router)
 app.include_router(billing_requirement_router)
+app.include_router(invoice_preflight_router)
 app.include_router(router)
 
 
