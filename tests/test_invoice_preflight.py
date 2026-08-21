@@ -481,3 +481,29 @@ def test_explicitly_unrequired_fields_produce_ready_result() -> None:
         finding.severity is FindingSeverity.PASS
         for finding in result.findings
     )
+
+
+def test_attachment_matching_ignores_leading_article() -> None:
+    requirements = _requirements(
+        required_attachments=[
+            "A signed milestone acceptance certificate",
+        ]
+    )
+    invoice = _invoice(
+        attachments=[
+            "Signed milestone acceptance certificate",
+        ]
+    )
+
+    result = InvoicePreflightEngine.evaluate(
+        requirements,
+        invoice,
+    )
+
+    finding = _finding(
+        result,
+        PreflightField.ATTACHMENTS,
+    )
+
+    assert result.payment_readiness is PaymentReadiness.READY
+    assert finding.severity is FindingSeverity.PASS

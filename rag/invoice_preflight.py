@@ -535,10 +535,38 @@ class InvoicePreflightEngine:
         required_attachment: str,
         invoice_attachment: str,
     ) -> bool:
-        required = cls._normalize_text(required_attachment)
-        actual = cls._normalize_text(invoice_attachment)
+        required = cls._normalize_attachment_name(
+            required_attachment
+        )
+        actual = cls._normalize_attachment_name(
+            invoice_attachment
+        )
 
         return required == actual or required in actual
+
+    @classmethod
+    def _normalize_attachment_name(
+        cls,
+        value: str,
+    ) -> str:
+        """
+        Normalize an attachment description for comparison.
+
+        Leading English articles do not change the identity of an
+        attachment. All other meaningful words remain required.
+        """
+
+        normalized = cls._normalize_text(value)
+        words = normalized.split()
+
+        if words and words[0] in {
+            "a",
+            "an",
+            "the",
+        }:
+            words = words[1:]
+
+        return " ".join(words)
 
     @classmethod
     def _looks_like_milestone_approval(
