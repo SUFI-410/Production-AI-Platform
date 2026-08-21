@@ -51,6 +51,73 @@ The current release includes:
 
 ---
 
+## Current Product Direction: AI Invoice Preflight
+
+The production RAG platform now serves as reusable infrastructure for an AI Invoice Preflight product for US B2B service companies.
+
+Its core purpose is:
+
+> Catch payment-blocking invoice mistakes before the customer sees the invoice.
+
+The initial customer profile includes MSPs, software and development agencies, engineering consultancies, professional-services firms, and other B2B service companies that bill enterprise customers using contracts, SOWs, purchase orders, project codes, milestones, and customer-specific billing instructions.
+
+### Preflight Flow
+
+```text
+Contract / SOW / Purchase Order / Billing Instructions
+                            |
+                            v
+            Billing Requirements Extraction
+                            |
+                            v
+                    Invoice Upload
+                            |
+                            v
+                Invoice Facts Extraction
+                            |
+                            v
+             Deterministic Python Comparison
+                            |
+                            v
+               PASS / WARNING / BLOCKER
+                            |
+                            v
+                  Payment Readiness
+```
+
+### Decision Boundary
+
+The language model is used only to extract factual fields with verified source evidence.
+
+Deterministic Python code makes every final decision, including:
+
+- `PASS`
+- `WARNING`
+- `BLOCKER`
+- `READY`
+- `REVIEW_REQUIRED`
+- `BLOCKED`
+
+The model never directly decides whether an invoice passes.
+
+### Backend MVP Capabilities
+
+- authenticated organization and user accounts
+- durable tenant document uploads
+- tenant-isolated PostgreSQL metadata
+- contracts, SOWs, purchase orders, and billing instructions
+- invoice document classification
+- grounded billing-requirements extraction
+- grounded invoice-facts extraction
+- exact evidence-quote verification
+- deterministic PO, payment-term, billing-entity, project-code, attachment, and milestone checks
+- authenticated tenant-filtered preflight endpoint
+- protection against cross-tenant document mixing
+- real `BLOCKED` and `READY` API smoke tests
+
+The Invoice Preflight backend is currently under development and is not yet part of the public production deployment.
+
+---
 ## Features
 
 ### Retrieval
@@ -335,79 +402,61 @@ The main backend structure is:
 ```text
 Production-AI-Platform/
 |
-├── .github/
-│   └── workflows/
-│
-├── api/
-│   ├── __init__.py
-│   ├── dependencies.py
-│   ├── main.py
-│   ├── routes.py
-│   ├── schemas.py
-│   └── turnstile.py
-│
-├── data/
-│   └── docs/
-│       ├── python_basics.md
-│       ├── python_decorators.md
-│       ├── python_functions.md
-│       ├── python_intro.md
-│       └── python_oop.md
-│
-├── evaluation/
-│   ├── __init__.py
-│   ├── dataset.json
-│   ├── evaluate.py
-│   ├── metrics.py
-│   └── report.py
-│
-├── rag/
-│   ├── __init__.py
-│   ├── adaptive_retrieval.py
-│   ├── application.py
-│   ├── bm25.py
-│   ├── chain.py
-│   ├── cli.py
-│   ├── config.py
-│   ├── context_compressor.py
-│   ├── crawler.py
-│   ├── embeddings.py
-│   ├── exceptions.py
-│   ├── fusion.py
-│   ├── groundedness_checker.py
-│   ├── hybrid.py
-│   ├── importer.py
-│   ├── loader.py
-│   ├── logger.py
-│   ├── memory.py
-│   ├── multi_query.py
-│   ├── prompt.py
-│   ├── query_rewriter.py
-│   ├── reranker.py
-│   ├── response_cache.py
-│   ├── retriever.py
-│   ├── source_formatter.py
-│   ├── splitter.py
-│   ├── utils.py
-│   └── vector_store.py
-│
-├── tests/
-│   ├── test_api_sessions.py
-│   ├── test_application_sessions.py
-│   ├── test_chain_groundedness.py
-│   └── test_session_memory_store.py
-│
-├── .dockerignore
-├── .env.example
-├── .gitignore
-├── app.py
-├── clean_tree.py
-├── docker-compose.yml
-├── Dockerfile
-├── LICENSE
-├── PROJECT_PROGRESS.md
-├── README.md
-└── requirements.txt
+|-- .github/
+|   `-- workflows/
+|       `-- ci-cd.yml
+|
+|-- api/
+|   |-- auth_routes.py
+|   |-- billing_requirement_routes.py
+|   |-- dependencies.py
+|   |-- document_routes.py
+|   |-- invoice_preflight_routes.py
+|   |-- main.py
+|   |-- routes.py
+|   |-- schemas.py
+|   `-- turnstile.py
+|
+|-- data/
+|   |-- docs/
+|   `-- uploads/                 # private runtime data, Git-ignored
+|
+|-- migrations/
+|   `-- versions/
+|       `-- 8e7f31c9a4d2_add_document_storage_fields.py
+|
+|-- rag/
+|   |-- billing_requirements.py
+|   |-- billing_requirements_service.py
+|   |-- document_storage.py
+|   |-- invoice_facts.py
+|   |-- invoice_preflight.py
+|   |-- invoice_preflight_service.py
+|   |-- tenant_document_loader.py
+|   |-- application.py
+|   |-- config.py
+|   `-- remaining RAG pipeline modules
+|
+|-- tests/
+|   |-- test_billing_requirement_routes.py
+|   |-- test_billing_requirements.py
+|   |-- test_billing_requirements_service.py
+|   |-- test_document_routes.py
+|   |-- test_document_storage.py
+|   |-- test_invoice_facts.py
+|   |-- test_invoice_preflight.py
+|   |-- test_invoice_preflight_routes.py
+|   |-- test_invoice_preflight_service.py
+|   |-- test_tenant_document_loader.py
+|   `-- existing RAG, authentication, and session tests
+|
+|-- .env.example
+|-- alembic.ini
+|-- docker-compose.yml
+|-- Dockerfile
+|-- PROJECT_PROGRESS.md
+|-- README.md
+`-- requirements.txt
 ```
 
 `api/main.py` is the FastAPI application entrypoint.
@@ -753,6 +802,138 @@ Example response:
 
 ---
 
+### Authentication
+
+Invoice Preflight endpoints require a JWT bearer token obtained through:
+
+```http
+POST /auth/register
+POST /auth/login
+GET /auth/me
+```
+
+Send the token using:
+
+```http
+Authorization: Bearer <access-token>
+```
+
+---
+
+### Upload Tenant Document
+
+```http
+POST /documents
+```
+
+The request uses `multipart/form-data`:
+
+```text
+file=<uploaded PDF or Markdown file>
+document_type=<business document type>
+```
+
+Supported business document types:
+
+- `contract`
+- `sow`
+- `purchase_order`
+- `billing_instructions`
+- `invoice`
+- `supporting_evidence`
+- `other`
+
+Uploaded files are stored durably while PostgreSQL stores tenant-owned metadata. Internal storage keys are never exposed as customer-facing evidence filenames.
+
+---
+
+### Extract Billing Requirements
+
+```http
+POST /billing-requirements/extract
+```
+
+Request body:
+
+```json
+{
+  "document_ids": [
+    "contract-or-billing-document-uuid"
+  ]
+}
+```
+
+Accepted source types are contracts, SOWs, purchase orders, and billing instructions.
+
+The response can include:
+
+- PO requirement and PO number
+- payment terms
+- billing entity
+- project code
+- milestone-approval requirement
+- required attachments
+- verified evidence containing source ID, original filename, page, and exact quote
+
+---
+
+### Evaluate Invoice Preflight
+
+```http
+POST /invoice-preflight/evaluate
+```
+
+Request body:
+
+```json
+{
+  "billing_document_ids": [
+    "contract-or-billing-document-uuid"
+  ],
+  "invoice_document_id": "invoice-document-uuid"
+}
+```
+
+The authenticated organization is resolved server-side. Clients cannot submit an organization ID. Missing and foreign-tenant documents return the same `404` response to prevent tenant-information disclosure.
+
+Example blocked response:
+
+```json
+{
+  "payment_readiness": "BLOCKED",
+  "findings": [
+    {
+      "severity": "BLOCKER",
+      "field": "po_number",
+      "message": "Invoice PO PO-9999 does not match required PO PO-4821."
+    },
+    {
+      "severity": "BLOCKER",
+      "field": "payment_terms",
+      "message": "Invoice uses Net 30, but Net 45 is required."
+    },
+    {
+      "severity": "PASS",
+      "field": "billing_entity",
+      "message": "Invoice correctly includes required billing entity Enterprise Customer LLC."
+    }
+  ]
+}
+```
+
+Possible payment-readiness values:
+
+- `READY`
+- `REVIEW_REQUIRED`
+- `BLOCKED`
+
+Possible finding severities:
+
+- `PASS`
+- `WARNING`
+- `BLOCKER`
+
+---
 ### Chat
 
 ```http
