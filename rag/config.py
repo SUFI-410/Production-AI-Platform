@@ -31,6 +31,20 @@ class Config:
 
     MAX_TOKENS = 1024
 
+    # Keep synchronous model work below the public gateway timeout.
+    OPENAI_REQUEST_TIMEOUT_SECONDS = float(
+        os.getenv("OPENAI_REQUEST_TIMEOUT_SECONDS", "45")
+    )
+
+    OPENAI_MAX_RETRIES = int(
+        os.getenv("OPENAI_MAX_RETRIES", "1")
+    )
+
+    OPENAI_REASONING_EFFORT = os.getenv(
+        "OPENAI_REASONING_EFFORT",
+        "low",
+    )
+
     # ------------------------------------------------------------------
     # PostgreSQL
     # ------------------------------------------------------------------
