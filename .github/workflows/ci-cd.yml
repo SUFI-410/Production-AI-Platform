@@ -167,7 +167,10 @@ jobs:
             git pull --ff-only origin main
 
             docker compose config --quiet
-            mkdir -p backups
+
+            backup_directory="$HOME/Production-AI-Platform-backups"
+            mkdir -p "$backup_directory"
+            chmod 700 "$backup_directory"
 
             echo "Starting PostgreSQL..."
             docker compose up -d postgres
@@ -191,7 +194,7 @@ jobs:
               exit 1
             fi
 
-            backup_path="backups/pre-migration-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
+            backup_path="${backup_directory}/pre-migration-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
 
             echo "Creating pre-migration database backup..."
             docker compose exec -T postgres \

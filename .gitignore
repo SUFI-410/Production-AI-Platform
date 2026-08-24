@@ -81,3 +81,8 @@ evaluation/results/
 # Private Tenant Document Storage
 # ============================================
 data/uploads/
+
+# ============================================
+# Production Database Backups
+# ============================================
+backups/
