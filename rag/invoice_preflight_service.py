@@ -8,6 +8,10 @@ document mixing.
 
 from __future__ import annotations
 
+import logging
+from concurrent.futures import ThreadPoolExecutor
+from time import monotonic
+
 from rag.billing_requirements_service import (
     BillingRequirementsService,
 )
@@ -21,6 +25,9 @@ from rag.models import (
     DocumentType,
 )
 from rag.tenant_document_loader import TenantDocumentLoader
+
+
+logger = logging.getLogger(__name__)
 
 
 class InvoicePreflightServiceError(RuntimeError):
@@ -106,20 +113,36 @@ class InvoicePreflightService:
             invoice_document,
         )
 
-        billing_requirements = (
-            self.billing_requirements_service.extract(
-                billing_documents
-            )
-        )
-
         loaded_invoice_documents = (
             self.document_loader.load(
                 invoice_document
             )
         )
 
-        invoice_facts = self.invoice_extractor.extract(
-            loaded_invoice_documents
+        started_at = monotonic()
+
+        # These extractions are independent. Running them concurrently
+        # bounds normal endpoint latency to the slower model call rather
+        # than the sum of both model calls.
+        with ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="invoice-preflight",
+        ) as executor:
+            billing_future = executor.submit(
+                self.billing_requirements_service.extract,
+                billing_documents,
+            )
+            invoice_future = executor.submit(
+                self.invoice_extractor.extract,
+                loaded_invoice_documents,
+            )
+
+            billing_requirements = billing_future.result()
+            invoice_facts = invoice_future.result()
+
+        logger.info(
+            "Invoice preflight extraction completed in %.2f seconds.",
+            monotonic() - started_at,
         )
 
         return InvoicePreflightEngine.evaluate(
