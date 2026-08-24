@@ -4,22 +4,52 @@ FastAPI application entry point.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.auth_routes import router as auth_router
+from api.billing_requirement_routes import (
+    router as billing_requirement_router,
+)
+from api.invoice_preflight_routes import (
+    router as invoice_preflight_router,
+)
+from api.document_routes import router as document_router
 from api.routes import router
 from api.schemas import HealthResponse
 from rag.config import Config
 
+
+@asynccontextmanager
+async def lifespan(
+    app: FastAPI,
+) -> AsyncGenerator[None, None]:
+    """
+    Validate required configuration when the API starts.
+    """
+
+    Config.validate_api()
+
+    yield
+
+
 app = FastAPI(
     title="Production AI Platform",
-    description="Production-grade Retrieval-Augmented Generation (RAG) API.",
+    description=(
+        "Production-grade Retrieval-Augmented Generation (RAG) API."
+    ),
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
+
 # CORS
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=Config.CORS_ORIGINS,
@@ -28,18 +58,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # Register API routes
+
+app.include_router(auth_router)
+app.include_router(document_router)
+app.include_router(billing_requirement_router)
+app.include_router(invoice_preflight_router)
 app.include_router(router)
 
 
-@app.get("/", tags=["System"])
+@app.get(
+    "/",
+    tags=["System"],
+)
 def root() -> dict[str, str]:
     """
     Root endpoint.
     """
 
     return {
-        "message": "Production AI Platform API is running."
+        "message": (
+            "Production AI Platform API is running."
+        )
     }
 
 

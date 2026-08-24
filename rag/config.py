@@ -32,6 +32,38 @@ class Config:
     MAX_TOKENS = 1024
 
     # ------------------------------------------------------------------
+    # PostgreSQL
+    # ------------------------------------------------------------------
+
+    DATABASE_URL: str | None = os.getenv("DATABASE_URL")
+
+    # ------------------------------------------------------------------
+    # Document Storage
+    # ------------------------------------------------------------------
+
+    DOCUMENT_STORAGE_DIR = Path(
+        os.getenv(
+            "DOCUMENT_STORAGE_DIR",
+            "data/uploads",
+        )
+    )
+
+    # ------------------------------------------------------------------
+    # Authentication
+    # ------------------------------------------------------------------
+
+    JWT_SECRET_KEY: str | None = os.getenv("JWT_SECRET_KEY")
+
+    JWT_ALGORITHM = "HS256"
+
+    ACCESS_TOKEN_EXPIRE_MINUTES = int(
+        os.getenv(
+            "ACCESS_TOKEN_EXPIRE_MINUTES",
+            "30",
+        )
+    )
+
+    # ------------------------------------------------------------------
     # Chroma
     # ------------------------------------------------------------------
 
@@ -159,6 +191,41 @@ class Config:
                 "OPENAI_API_KEY was not found.\n"
                 "Create a .env file containing:\n\n"
                 "OPENAI_API_KEY=your_api_key"
+            )
+
+        cls.CHROMA_DIR.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        cls.LOG_DIR.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+    @classmethod
+    def validate_api(cls) -> None:
+        """
+        Validate configuration required by the FastAPI service.
+        """
+
+        missing: list[str] = []
+
+        if not cls.OPENAI_API_KEY:
+            missing.append("OPENAI_API_KEY")
+
+        if not cls.DATABASE_URL:
+            missing.append("DATABASE_URL")
+
+        if not cls.JWT_SECRET_KEY:
+            missing.append("JWT_SECRET_KEY")
+
+        if missing:
+            missing_values = ", ".join(missing)
+
+            raise RuntimeError(
+                "Missing required API configuration: "
+                f"{missing_values}"
             )
 
         cls.CHROMA_DIR.mkdir(
