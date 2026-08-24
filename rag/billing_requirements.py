@@ -139,6 +139,13 @@ class BillingRequirementsExtractor:
         llm = ChatOpenAI(
             model=Config.CHAT_MODEL,
             temperature=Config.TEMPERATURE,
+            timeout=(
+                Config.OPENAI_REQUEST_TIMEOUT_SECONDS
+            ),
+            max_retries=Config.OPENAI_MAX_RETRIES,
+            reasoning_effort=(
+                Config.OPENAI_REASONING_EFFORT
+            ),
         )
 
         self.structured_llm = llm.with_structured_output(

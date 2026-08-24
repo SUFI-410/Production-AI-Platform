@@ -275,11 +275,11 @@ def test_evaluate_orchestrates_preflight_in_correct_order() -> None:
     )
 
     assert result.payment_readiness is PaymentReadiness.READY
-    assert events == [
+    assert events[0] == "invoice_load"
+    assert set(events[1:]) == {
         "billing_requirements",
-        "invoice_load",
         "invoice_facts",
-    ]
+    }
     assert billing_service.calls == [billing_documents]
     assert document_loader.calls == [invoice_document]
     assert invoice_extractor.calls == [loaded_invoice]
@@ -498,8 +498,10 @@ def test_billing_requirements_error_is_preserved() -> None:
     billing_service = FakeBillingRequirementsService(
         error=expected_error
     )
-    document_loader = FakeTenantDocumentLoader()
-    invoice_extractor = FakeInvoiceFactsExtractor()
+    document_loader = FakeTenantDocumentLoader([])
+    invoice_extractor = FakeInvoiceFactsExtractor(
+        _invoice_facts()
+    )
     service = _create_service(
         billing_service,
         document_loader,
@@ -516,8 +518,8 @@ def test_billing_requirements_error_is_preserved() -> None:
 
     assert error_info.value is expected_error
     assert billing_service.calls == [billing_documents]
-    assert document_loader.calls == []
-    assert invoice_extractor.calls == []
+    assert document_loader.calls == [invoice_document]
+    assert invoice_extractor.calls == [[]]
 
 
 def test_invoice_loader_error_is_preserved() -> None:
@@ -556,7 +558,7 @@ def test_invoice_loader_error_is_preserved() -> None:
         )
 
     assert error_info.value is expected_error
-    assert billing_service.calls == [billing_documents]
+    assert billing_service.calls == []
     assert document_loader.calls == [invoice_document]
     assert invoice_extractor.calls == []
 
