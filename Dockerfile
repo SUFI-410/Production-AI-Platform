@@ -19,14 +19,16 @@ RUN python -m pip install \
 # Copy application source
 COPY . .
 
-# Create a non-root user with a real home directory
+# Create a non-root user and writable persistent-data mount points
 RUN addgroup --system app && \
     adduser \
     --system \
     --ingroup app \
     --home /home/app \
     app && \
-    mkdir -p /home/app/.cache/huggingface && \
+    mkdir -p \
+    /home/app/.cache/huggingface \
+    /app/data/uploads && \
     chown -R app:app /home/app /app
 
 # Configure Hugging Face cache

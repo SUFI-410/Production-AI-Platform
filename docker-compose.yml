@@ -26,9 +26,11 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql+psycopg://rag_user:${POSTGRES_PASSWORD}@postgres:5432/rag_platform
+      DOCUMENT_STORAGE_DIR: /app/data/uploads
     volumes:
       - chroma-data:/app/chroma_db
       - huggingface-cache:/home/app/.cache/huggingface
+      - document-uploads:/app/data/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,3 +45,6 @@ volumes:
 
   huggingface-cache:
     name: production-ai-platform-huggingface-cache
+
+  document-uploads:
+    name: production-ai-platform-document-uploads
