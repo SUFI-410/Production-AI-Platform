@@ -9,12 +9,16 @@ import uuid
 
 from fastapi import (
     APIRouter,
+    Depends,
     HTTPException,
     Request,
     status,
 )
 
-from api.dependencies import get_application
+from api.dependencies import (
+    get_application,
+    get_current_user,
+)
 from api.schemas import ChatRequest, ChatResponse
 from api.turnstile import verify_turnstile
 from rag.logger import get_logger
@@ -36,6 +40,7 @@ def _new_session_id() -> str:
     "/chat",
     response_model=ChatResponse,
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(get_current_user)],
 )
 def chat(
     payload: ChatRequest,
