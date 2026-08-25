@@ -168,6 +168,8 @@ jobs:
 
             docker compose config --quiet
 
+            umask 077
+
             backup_directory="$HOME/Production-AI-Platform-backups"
             mkdir -p "$backup_directory"
             chmod 700 "$backup_directory"
@@ -201,8 +203,17 @@ jobs:
               pg_dump -U rag_user -d rag_platform |
               gzip > "$backup_path"
 
+            chmod 600 "$backup_path"
+
             if [ ! -s "$backup_path" ]; then
               echo "Deployment aborted: database backup is empty."
+              exit 1
+            fi
+
+            backup_permissions="$(stat -c '%a' "$backup_path")"
+
+            if [ "$backup_permissions" != "600" ]; then
+              echo "Deployment aborted: backup permissions must be 600."
               exit 1
             fi
 
