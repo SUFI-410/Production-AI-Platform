@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -7,7 +8,23 @@ import pytest
 from fastapi.testclient import TestClient
 
 import api.routes as routes_module
+from api.dependencies import get_current_user
 from api.main import app
+
+
+@pytest.fixture(autouse=True)
+def clear_dependency_overrides() -> Iterator[None]:
+    app.dependency_overrides.clear()
+
+    yield
+
+    app.dependency_overrides.clear()
+
+
+def _override_authenticated_user() -> None:
+    app.dependency_overrides[
+        get_current_user
+    ] = lambda: object()
 
 
 @dataclass
@@ -84,6 +101,8 @@ def test_chat_forwards_session_id_and_use_cache(
         lambda: fake_application,
     )
 
+    _override_authenticated_user()
+
     client = TestClient(app)
 
     response = client.post(
@@ -156,6 +175,8 @@ def test_chat_returns_generated_session_id_when_omitted(
         lambda: "server-generated-session",
     )
 
+    _override_authenticated_user()
+
     client = TestClient(app)
 
     response = client.post(
@@ -185,3 +206,55 @@ def test_chat_returns_generated_session_id_when_omitted(
     assert body["answer"] == (
         "answer::What is polymorphism?"
     )
+
+
+def test_chat_requires_authentication() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/chat",
+        json={
+            "question": "Explain inheritance.",
+            "turnstile_token": "valid-test-token",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "detail": (
+            "Invalid or missing authentication "
+            "credentials."
+        )
+    }
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_chat_rejects_invalid_authentication() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/chat",
+        headers={
+            "Authorization": "Bearer invalid-token",
+        },
+        json={
+            "question": "Explain inheritance.",
+            "turnstile_token": "valid-test-token",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "detail": (
+            "Invalid or missing authentication "
+            "credentials."
+        )
+    }
+
+
+def test_chat_openapi_requires_bearer_authentication() -> None:
+    security = app.openapi()["paths"]["/chat"]["post"][
+        "security"
+    ]
+
+    assert {"HTTPBearer": []} in security
