@@ -7,7 +7,9 @@ from jwt import ExpiredSignatureError, InvalidTokenError
 from rag.config import Config
 from rag.security import (
     create_access_token,
+    create_registration_invite,
     decode_access_token,
+    decode_registration_invite,
     hash_password,
     verify_password,
 )
@@ -155,3 +157,74 @@ def test_access_token_requires_signing_secret(
         match="JWT_SECRET_KEY is not configured",
     ):
         create_access_token("user-123")
+
+
+def test_registration_invite_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        Config,
+        "JWT_SECRET_KEY",
+        TEST_JWT_SECRET,
+    )
+
+    token = create_registration_invite(
+        " Owner@Example.com ",
+        " Acme AI ",
+    )
+    payload = decode_registration_invite(token)
+
+    assert payload["sub"] == "owner@example.com"
+    assert payload["organization_name"] == "Acme AI"
+    assert payload["type"] == "registration_invite"
+
+
+def test_registration_invite_cannot_be_used_as_access_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        Config,
+        "JWT_SECRET_KEY",
+        TEST_JWT_SECRET,
+    )
+
+    token = create_registration_invite(
+        "owner@example.com",
+        "Acme AI",
+    )
+
+    with pytest.raises(
+        InvalidTokenError,
+        match="Invalid token type",
+    ):
+        decode_access_token(token)
+
+
+def test_registration_invite_rejects_access_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        Config,
+        "JWT_SECRET_KEY",
+        TEST_JWT_SECRET,
+    )
+
+    token = create_access_token("user-123")
+
+    with pytest.raises(
+        InvalidTokenError,
+        match="Invalid token type",
+    ):
+        decode_registration_invite(token)
+
+
+def test_registration_invite_rejects_invalid_expiry() -> None:
+    with pytest.raises(
+        ValueError,
+        match="at least 1 hour",
+    ):
+        create_registration_invite(
+            "owner@example.com",
+            "Acme AI",
+            expires_hours=0,
+        )

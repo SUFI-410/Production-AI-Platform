@@ -1,7 +1,7 @@
 """
 Authentication API routes.
 
-Provides account registration, login, and authenticated
+Provides invited account activation, login, and authenticated
 user profile endpoints.
 """
 
@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from jwt import InvalidTokenError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -28,6 +29,7 @@ from api.schemas import (
 from rag.models import Organization, User
 from rag.security import (
     create_access_token,
+    decode_registration_invite,
     hash_password,
     verify_password,
 )
@@ -55,13 +57,28 @@ def register(
     db: Annotated[Session, Depends(get_db)],
 ) -> TokenResponse:
     """
-    Create an organization and its first user.
+    Create an invited organization and its first user.
 
     Registration is committed atomically so an organization
     cannot be created without its initial user.
     """
 
-    email = _normalize_email(str(request.email))
+    try:
+        invitation = decode_registration_invite(
+            request.invitation_token
+        )
+    except InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "A valid, unexpired pilot invitation is required."
+            ),
+        ) from None
+
+    email = _normalize_email(str(invitation["sub"]))
+    organization_name = str(
+        invitation["organization_name"]
+    ).strip()
 
     existing_user = db.scalar(
         select(User).where(
@@ -78,7 +95,7 @@ def register(
         )
 
     organization = Organization(
-        name=request.organization_name,
+        name=organization_name,
     )
 
     db.add(organization)

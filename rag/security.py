@@ -68,6 +68,93 @@ def create_access_token(subject: str) -> str:
     )
 
 
+def create_registration_invite(
+    email: str,
+    organization_name: str,
+    *,
+    expires_hours: int = 72,
+) -> str:
+    """Create a signed, expiring pilot-registration invitation."""
+
+    normalized_email = email.strip().casefold()
+    normalized_organization = organization_name.strip()
+
+    if not normalized_email:
+        raise ValueError("Invitation email is required.")
+
+    if len(normalized_organization) < 2:
+        raise ValueError(
+            "Invitation organization name must contain at least 2 characters."
+        )
+
+    if expires_hours < 1:
+        raise ValueError(
+            "Invitation expiry must be at least 1 hour."
+        )
+
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(hours=expires_hours)
+
+    payload = {
+        "sub": normalized_email,
+        "organization_name": normalized_organization,
+        "iat": now,
+        "exp": expires_at,
+        "type": "registration_invite",
+    }
+
+    return jwt.encode(
+        payload,
+        _get_jwt_secret_key(),
+        algorithm=Config.JWT_ALGORITHM,
+    )
+
+
+def decode_registration_invite(
+    token: str,
+) -> dict[str, object]:
+    """Decode and validate a pilot-registration invitation."""
+
+    payload = jwt.decode(
+        token,
+        _get_jwt_secret_key(),
+        algorithms=[Config.JWT_ALGORITHM],
+        options={
+            "require": [
+                "sub",
+                "iat",
+                "exp",
+                "type",
+            ]
+        },
+    )
+
+    if payload.get("type") != "registration_invite":
+        raise InvalidTokenError(
+            "Invalid token type."
+        )
+
+    subject = payload.get("sub")
+    organization_name = payload.get(
+        "organization_name"
+    )
+
+    if not isinstance(subject, str) or not subject:
+        raise InvalidTokenError(
+            "Invalid invitation email."
+        )
+
+    if (
+        not isinstance(organization_name, str)
+        or len(organization_name.strip()) < 2
+    ):
+        raise InvalidTokenError(
+            "Invalid invitation organization."
+        )
+
+    return payload
+
+
 def decode_access_token(
     token: str,
 ) -> dict[str, object]:

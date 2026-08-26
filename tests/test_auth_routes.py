@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from jwt import InvalidTokenError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -84,8 +85,20 @@ class FakeSession:
 
 
 @pytest.fixture(autouse=True)
-def clear_dependency_overrides() -> Iterator[None]:
+def clear_dependency_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
     app.dependency_overrides.clear()
+
+    monkeypatch.setattr(
+        auth_routes_module,
+        "decode_registration_invite",
+        lambda token: {
+            "sub": "owner@example.com",
+            "organization_name": "Acme AI",
+            "type": "registration_invite",
+        },
+    )
 
     yield
 
@@ -144,8 +157,7 @@ def test_register_creates_organization_and_user(
     response = client.post(
         "/auth/register",
         json={
-            "organization_name": "  Acme AI  ",
-            "email": "Owner@Example.com",
+            "invitation_token": "valid-invitation",
             "password": "StrongPassword123!",
         },
     )
@@ -193,8 +205,7 @@ def test_register_rejects_duplicate_email() -> None:
     response = client.post(
         "/auth/register",
         json={
-            "organization_name": "Acme AI",
-            "email": "owner@example.com",
+            "invitation_token": "valid-invitation",
             "password": "StrongPassword123!",
         },
     )
@@ -235,8 +246,7 @@ def test_register_rolls_back_integrity_error(
     response = client.post(
         "/auth/register",
         json={
-            "organization_name": "Acme AI",
-            "email": "owner@example.com",
+            "invitation_token": "valid-invitation",
             "password": "StrongPassword123!",
         },
     )
@@ -244,6 +254,38 @@ def test_register_rolls_back_integrity_error(
     assert response.status_code == 409
     assert db.commit_called is True
     assert db.rollback_called is True
+
+
+def test_register_rejects_invalid_invitation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = FakeSession()
+    _override_database(db)
+
+    def reject_invitation(token: str) -> dict[str, object]:
+        raise InvalidTokenError("invalid")
+
+    monkeypatch.setattr(
+        auth_routes_module,
+        "decode_registration_invite",
+        reject_invitation,
+    )
+
+    response = TestClient(app).post(
+        "/auth/register",
+        json={
+            "invitation_token": "invalid-invitation",
+            "password": "StrongPassword123!",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "detail": (
+            "A valid, unexpired pilot invitation is required."
+        )
+    }
+    assert db.added == []
 
 
 def test_login_returns_access_token(
