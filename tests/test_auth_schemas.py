@@ -14,21 +14,17 @@ from api.schemas import (
 
 def test_register_request_accepts_valid_input() -> None:
     request = RegisterRequest(
-        organization_name="Acme AI",
-        email="owner@example.com",
+        invitation_token="signed-invitation",
         password="StrongPassword123!",
     )
 
-    assert request.organization_name == "Acme AI"
-    assert request.email == "owner@example.com"
+    assert request.invitation_token == "signed-invitation"
     assert request.password == "StrongPassword123!"
 
 
-def test_register_request_rejects_invalid_email() -> None:
+def test_register_request_requires_invitation() -> None:
     with pytest.raises(ValidationError):
         RegisterRequest(
-            organization_name="Acme AI",
-            email="not-an-email",
             password="StrongPassword123!",
         )
 
@@ -36,17 +32,15 @@ def test_register_request_rejects_invalid_email() -> None:
 def test_register_request_rejects_short_password() -> None:
     with pytest.raises(ValidationError):
         RegisterRequest(
-            organization_name="Acme AI",
-            email="owner@example.com",
+            invitation_token="signed-invitation",
             password="short",
         )
 
 
-def test_register_request_rejects_blank_organization_name() -> None:
+def test_register_request_rejects_blank_invitation() -> None:
     with pytest.raises(ValidationError):
         RegisterRequest(
-            organization_name="   ",
-            email="owner@example.com",
+            invitation_token="",
             password="StrongPassword123!",
         )
 

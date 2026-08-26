@@ -28,21 +28,15 @@ from rag.models import DocumentType
 
 class RegisterRequest(BaseModel):
     """
-    Request payload for creating an organization and its first user.
+    Request payload for activating an invited pilot workspace.
     """
 
-    organization_name: str = Field(
+    invitation_token: str = Field(
         ...,
-        min_length=2,
-        max_length=255,
-        description="Name of the organization to create.",
-        examples=["Acme AI"],
-    )
-
-    email: EmailStr = Field(
-        ...,
-        description="Email address for the new user.",
-        examples=["owner@example.com"],
+        min_length=1,
+        description=(
+            "Signed pilot invitation supplied by the workspace owner."
+        ),
     )
 
     password: str = Field(
@@ -53,26 +47,6 @@ class RegisterRequest(BaseModel):
             "Password for the new account. Must contain at least 12 characters."
         ),
     )
-
-    @field_validator("organization_name")
-    @classmethod
-    def validate_organization_name(
-        cls,
-        value: str,
-    ) -> str:
-        """
-        Normalize and validate the organization name.
-        """
-
-        value = value.strip()
-
-        if len(value) < 2:
-            raise ValueError(
-                "Organization name must contain at least 2 characters."
-            )
-
-        return value
-
 
 class LoginRequest(BaseModel):
     """
