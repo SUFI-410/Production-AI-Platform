@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from threading import Lock
-from typing import Annotated
+from typing import Annotated, TYPE_CHECKING
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
@@ -17,7 +17,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import InvalidTokenError
 from sqlalchemy.orm import Session
 
-from rag.application import RAGApplication
+if TYPE_CHECKING:
+    from rag.application import RAGApplication
 from rag.database import SessionLocal
 from rag.logger import get_logger
 from rag.models import Organization, User
@@ -94,6 +95,11 @@ def get_current_user(
     if user is None or not user.is_active:
         raise _unauthorized()
 
+    # Tokens issued before this migration have implicit version zero.
+    token_version = payload.get("auth_version", 0)
+    if type(token_version) is not int or token_version != user.auth_version:
+        raise _unauthorized()
+
     return user
 
 
@@ -139,6 +145,8 @@ def get_rag_application() -> RAGApplication:
     concurrent requests cannot initialize the RAG application
     more than once.
     """
+
+    from rag.application import RAGApplication
 
     global _rag_application
 

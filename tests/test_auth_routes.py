@@ -149,7 +149,7 @@ def test_register_creates_organization_and_user(
     monkeypatch.setattr(
         auth_routes_module,
         "create_access_token",
-        lambda subject: f"token::{subject}",
+        lambda subject, auth_version=0: f"token::{subject}",
     )
 
     client = TestClient(app)
@@ -325,7 +325,7 @@ def test_login_returns_access_token(
     monkeypatch.setattr(
         auth_routes_module,
         "create_access_token",
-        lambda subject: f"token::{subject}",
+        lambda subject, auth_version=0: f"token::{subject}",
     )
 
     client = TestClient(app)

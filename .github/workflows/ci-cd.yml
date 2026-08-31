@@ -56,6 +56,7 @@ jobs:
     env:
       OPENAI_API_KEY: test-openai-key
       DATABASE_URL: postgresql+psycopg://rag_user:test_password@127.0.0.1:5432/rag_platform
+      PASSWORD_RESET_TEST_DATABASE_URL: postgresql+psycopg://rag_user:test_password@127.0.0.1:5432/rag_platform
       JWT_SECRET_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       DOCUMENT_STORAGE_DIR: /tmp/production-ai-platform-test-uploads
 

@@ -70,6 +70,21 @@ class Config:
 
     JWT_ALGORITHM = "HS256"
 
+    # Disabled until an operator configures and verifies email delivery.
+    PASSWORD_RESET_ENABLED = (
+        os.getenv("PASSWORD_RESET_ENABLED", "false").lower() == "true"
+    )
+    PASSWORD_RESET_URL = os.getenv(
+        "PASSWORD_RESET_URL", "https://www.buildwithsufyan.com/reset-password",
+    )
+    PASSWORD_RESET_EXPIRE_MINUTES = 30
+    SMTP_HOST = os.getenv("SMTP_HOST", "")
+    SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
+    SMTP_SECURITY = os.getenv("SMTP_SECURITY", "ssl")
+    SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
+    SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+    SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "")
+
     ACCESS_TOKEN_EXPIRE_MINUTES = int(
         os.getenv(
             "ACCESS_TOKEN_EXPIRE_MINUTES",

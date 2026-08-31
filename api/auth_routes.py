@@ -126,7 +126,7 @@ def register(
 
     return TokenResponse(
         access_token=create_access_token(
-            str(user.id)
+            str(user.id), auth_version=user.auth_version or 0,
         )
     )
 
@@ -167,7 +167,7 @@ def login(
 
     return TokenResponse(
         access_token=create_access_token(
-            str(user.id)
+            str(user.id), auth_version=user.auth_version or 0,
         )
     )
 

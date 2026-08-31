@@ -45,7 +45,7 @@ def verify_password(
     )
 
 
-def create_access_token(subject: str) -> str:
+def create_access_token(subject: str, auth_version: int = 0) -> str:
     """Create a signed JWT access token."""
 
     now = datetime.now(timezone.utc)
@@ -59,6 +59,7 @@ def create_access_token(subject: str) -> str:
         "iat": now,
         "exp": expires_at,
         "type": "access",
+        "auth_version": auth_version,
     }
 
     return jwt.encode(
