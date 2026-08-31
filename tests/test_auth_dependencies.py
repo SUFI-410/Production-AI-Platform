@@ -36,6 +36,7 @@ class FakeUser:
         self.id = USER_ID
         self.organization_id = organization_id
         self.is_active = is_active
+        self.auth_version = 0
 
 
 class FakeSession:
@@ -104,6 +105,26 @@ def test_get_current_user_rejects_missing_credentials() -> None:
     assert exc_info.value.headers == {
         "WWW-Authenticate": "Bearer"
     }
+
+
+@pytest.mark.parametrize("version", [True, "0", None, -1, 1])
+def test_get_current_user_rejects_wrong_token_version(monkeypatch, version):
+    monkeypatch.setattr(dependencies_module, "decode_access_token", lambda token: {
+        "sub": str(USER_ID), "type": "access", "auth_version": version,
+    })
+    with pytest.raises(HTTPException) as error:
+        get_current_user(_credentials(), cast(Session, FakeSession(FakeUser())))
+    assert error.value.status_code == 401
+
+
+def test_legacy_access_token_is_rejected_after_reset(monkeypatch):
+    user = FakeUser()
+    user.auth_version = 1
+    monkeypatch.setattr(dependencies_module, "decode_access_token", lambda token: {
+        "sub": str(USER_ID), "type": "access",
+    })
+    with pytest.raises(HTTPException):
+        get_current_user(_credentials(), cast(Session, FakeSession(user)))
 
 
 def test_get_current_user_rejects_invalid_token(
