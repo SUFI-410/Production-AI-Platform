@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.auth_routes import router as auth_router
+from api.password_reset_routes import router as password_reset_router
 from api.billing_requirement_routes import (
     router as billing_requirement_router,
 )
@@ -62,6 +63,7 @@ app.add_middleware(
 # Register API routes
 
 app.include_router(auth_router)
+app.include_router(password_reset_router)
 app.include_router(document_router)
 app.include_router(billing_requirement_router)
 app.include_router(invoice_preflight_router)
