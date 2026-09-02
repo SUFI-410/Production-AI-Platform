@@ -77,6 +77,36 @@ class Config:
         )
     )
 
+    PADDLE_STARTER_MONTHLY_PRICE_ID = os.getenv(
+        "PADDLE_STARTER_MONTHLY_PRICE_ID",
+        "",
+    )
+
+    PADDLE_STARTER_ANNUAL_PRICE_ID = os.getenv(
+        "PADDLE_STARTER_ANNUAL_PRICE_ID",
+        "",
+    )
+
+    PADDLE_PROFESSIONAL_MONTHLY_PRICE_ID = os.getenv(
+        "PADDLE_PROFESSIONAL_MONTHLY_PRICE_ID",
+        "",
+    )
+
+    PADDLE_PROFESSIONAL_ANNUAL_PRICE_ID = os.getenv(
+        "PADDLE_PROFESSIONAL_ANNUAL_PRICE_ID",
+        "",
+    )
+
+    PADDLE_BUSINESS_MONTHLY_PRICE_ID = os.getenv(
+        "PADDLE_BUSINESS_MONTHLY_PRICE_ID",
+        "",
+    )
+
+    PADDLE_BUSINESS_ANNUAL_PRICE_ID = os.getenv(
+        "PADDLE_BUSINESS_ANNUAL_PRICE_ID",
+        "",
+    )
+
     # ------------------------------------------------------------------
     # Document Storage
     # ------------------------------------------------------------------
