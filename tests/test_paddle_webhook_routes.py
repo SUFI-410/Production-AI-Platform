@@ -1,4 +1,4 @@
-"""Tests for the Paddle webhook receipt endpoint."""
+"""Tests for the Paddle webhook processing endpoint."""
 
 from __future__ import annotations
 
@@ -6,23 +6,43 @@ import hashlib
 import hmac
 import json
 from collections.abc import Iterator
+from datetime import datetime, timezone
 from typing import Any, cast
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+import api.paddle_webhook_routes as webhook_routes
 from api.dependencies import get_db
 from api.main import app
 from rag.config import Config
 from rag.models import BillingEvent
+from rag.paddle_subscription_service import (
+    PaddleSubscriptionServiceError,
+)
+from rag.paddle_subscription_sync import (
+    PaddleSubscriptionState,
+    PaddleSubscriptionSyncError,
+)
 
 
 SECRET = "test_paddle_webhook_secret"
 TIMESTAMP = 1_700_000_000
 
-EVENT_PAYLOAD = {
+PROCESSED_AT = datetime(
+    2026,
+    9,
+    2,
+    10,
+    0,
+    tzinfo=timezone.utc,
+)
+
+
+SUBSCRIPTION_PAYLOAD = {
     "event_id": "evt_123",
     "event_type": "subscription.updated",
     "data": {
@@ -31,8 +51,17 @@ EVENT_PAYLOAD = {
 }
 
 
+UNSUPPORTED_PAYLOAD = {
+    "event_id": "evt_transaction",
+    "event_type": "transaction.completed",
+    "data": {
+        "id": "txn_123",
+    },
+}
+
+
 class FakeSession:
-    """Minimal database session fake for Paddle webhook tests."""
+    """Minimal database session fake for Paddle webhook route tests."""
 
     def __init__(
         self,
@@ -49,7 +78,9 @@ class FakeSession:
 
         self.scalar_calls = 0
         self.statements: list[Any] = []
+
         self.added: list[BillingEvent] = []
+
         self.commit_calls = 0
         self.rollback_calls = 0
 
@@ -58,7 +89,9 @@ class FakeSession:
         statement: Any,
     ) -> BillingEvent | None:
         self.scalar_calls += 1
-        self.statements.append(statement)
+        self.statements.append(
+            statement
+        )
 
         if self.scalar_error is not None:
             raise self.scalar_error
@@ -77,7 +110,9 @@ class FakeSession:
         self,
         value: BillingEvent,
     ) -> None:
-        self.added.append(value)
+        self.added.append(
+            value
+        )
 
     def commit(
         self,
@@ -95,21 +130,36 @@ class FakeSession:
 
 @pytest.fixture(autouse=True)
 def clear_dependency_overrides(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
     app.dependency_overrides.clear()
 
     original_secret = Config.PADDLE_WEBHOOK_SECRET
-    original_tolerance = Config.PADDLE_WEBHOOK_TOLERANCE_SECONDS
+
+    original_tolerance = (
+        Config.PADDLE_WEBHOOK_TOLERANCE_SECONDS
+    )
 
     Config.PADDLE_WEBHOOK_SECRET = SECRET
 
-    # Large tolerance keeps static test timestamps deterministic.
-    Config.PADDLE_WEBHOOK_TOLERANCE_SECONDS = 10_000_000_000
+    # Large tolerance keeps static webhook timestamps deterministic.
+    Config.PADDLE_WEBHOOK_TOLERANCE_SECONDS = (
+        10_000_000_000
+    )
+
+    monkeypatch.setattr(
+        webhook_routes,
+        "_utc_now",
+        lambda: PROCESSED_AT,
+    )
 
     yield
 
     Config.PADDLE_WEBHOOK_SECRET = original_secret
-    Config.PADDLE_WEBHOOK_TOLERANCE_SECONDS = original_tolerance
+
+    Config.PADDLE_WEBHOOK_TOLERANCE_SECONDS = (
+        original_tolerance
+    )
 
     app.dependency_overrides.clear()
 
@@ -126,7 +176,7 @@ def _override_database(
 
 
 def _raw_body(
-    payload: Any = EVENT_PAYLOAD,
+    payload: Any = SUBSCRIPTION_PAYLOAD,
 ) -> bytes:
     return json.dumps(
         payload,
@@ -178,8 +228,79 @@ def _post_webhook(
     )
 
 
-def test_valid_webhook_is_persisted() -> None:
+def _processed_event(
+    *,
+    event_id: str = "evt_123",
+) -> BillingEvent:
+    return BillingEvent(
+        provider="paddle",
+        provider_event_id=event_id,
+        event_type="subscription.updated",
+        payload=SUBSCRIPTION_PAYLOAD,
+        processed_at=PROCESSED_AT,
+    )
+
+
+def _unprocessed_event(
+    *,
+    event_id: str = "evt_123",
+) -> BillingEvent:
+    return BillingEvent(
+        provider="paddle",
+        provider_event_id=event_id,
+        event_type="subscription.updated",
+        payload=SUBSCRIPTION_PAYLOAD,
+        processed_at=None,
+    )
+
+
+def _fake_state() -> PaddleSubscriptionState:
+    return Mock(
+        spec=PaddleSubscriptionState
+    )
+
+
+def _patch_subscription_processing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Mock, Mock]:
+    parser = Mock(
+        return_value=_fake_state()
+    )
+
+    synchronize = Mock()
+
+    service_instance = Mock()
+    service_instance.synchronize = synchronize
+
+    service_factory = Mock(
+        return_value=service_instance
+    )
+
+    monkeypatch.setattr(
+        webhook_routes,
+        "parse_paddle_subscription_event",
+        parser,
+    )
+
+    monkeypatch.setattr(
+        webhook_routes,
+        "PaddleSubscriptionService",
+        service_factory,
+    )
+
+    return parser, synchronize
+
+
+def test_supported_subscription_webhook_is_processed_and_committed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     db = FakeSession()
+
+    parser, synchronize = (
+        _patch_subscription_processing(
+            monkeypatch
+        )
+    )
 
     _override_database(db)
 
@@ -209,26 +330,83 @@ def test_valid_webhook_is_persisted() -> None:
     assert event.provider == "paddle"
     assert event.provider_event_id == "evt_123"
     assert event.event_type == "subscription.updated"
-    assert event.payload == EVENT_PAYLOAD
+    assert event.payload == SUBSCRIPTION_PAYLOAD
 
-    assert event.organization_id is None
-    assert event.subscription_id is None
-    assert event.processed_at is None
+    parser.assert_called_once_with(
+        SUBSCRIPTION_PAYLOAD
+    )
+
+    synchronize.assert_called_once()
+
+    call = synchronize.call_args
+
+    assert call.kwargs["billing_event"] is event
 
     assert db.commit_calls == 1
     assert db.rollback_calls == 0
 
 
-def test_duplicate_webhook_returns_success_without_insert() -> None:
-    existing_event = BillingEvent(
-        provider="paddle",
-        provider_event_id="evt_123",
-        event_type="subscription.updated",
-        payload=EVENT_PAYLOAD,
+def test_unsupported_webhook_is_persisted_and_marked_processed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = FakeSession()
+
+    parser = Mock()
+
+    monkeypatch.setattr(
+        webhook_routes,
+        "parse_paddle_subscription_event",
+        parser,
     )
+
+    _override_database(db)
+
+    client = TestClient(app)
+
+    raw_body = _raw_body(
+        UNSUPPORTED_PAYLOAD
+    )
+
+    response = _post_webhook(
+        client,
+        raw_body=raw_body,
+        signature_header=_signature_header(
+            raw_body
+        ),
+    )
+
+    assert response.status_code == 200
+
+    assert response.json() == {
+        "status": "received",
+    }
+
+    assert len(db.added) == 1
+
+    event = db.added[0]
+
+    assert event.event_type == "transaction.completed"
+    assert event.processed_at == PROCESSED_AT
+
+    parser.assert_not_called()
+
+    assert db.commit_calls == 1
+    assert db.rollback_calls == 0
+
+
+def test_processed_duplicate_returns_success_without_reprocessing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing_event = _processed_event()
 
     db = FakeSession(
         existing_event=existing_event
+    )
+
+    parser, synchronize = (
+        _patch_subscription_processing(
+            monkeypatch
+        )
     )
 
     _override_database(db)
@@ -251,9 +429,62 @@ def test_duplicate_webhook_returns_success_without_insert() -> None:
         "status": "duplicate",
     }
 
-    assert db.scalar_calls == 1
+    parser.assert_not_called()
+    synchronize.assert_not_called()
+
     assert db.added == []
     assert db.commit_calls == 0
+    assert db.rollback_calls == 0
+
+
+def test_unprocessed_existing_event_is_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing_event = _unprocessed_event()
+
+    db = FakeSession(
+        existing_event=existing_event
+    )
+
+    parser, synchronize = (
+        _patch_subscription_processing(
+            monkeypatch
+        )
+    )
+
+    _override_database(db)
+
+    client = TestClient(app)
+
+    raw_body = _raw_body()
+
+    response = _post_webhook(
+        client,
+        raw_body=raw_body,
+        signature_header=_signature_header(
+            raw_body
+        ),
+    )
+
+    assert response.status_code == 200
+
+    assert response.json() == {
+        "status": "received",
+    }
+
+    parser.assert_called_once_with(
+        existing_event.payload
+    )
+
+    synchronize.assert_called_once()
+
+    assert (
+        synchronize.call_args.kwargs["billing_event"]
+        is existing_event
+    )
+
+    assert db.added == []
+    assert db.commit_calls == 1
     assert db.rollback_calls == 0
 
 
@@ -430,12 +661,101 @@ def test_idempotency_query_failure_returns_safe_500(
     assert db.rollback_calls == 1
 
 
+def test_subscription_parser_failure_rolls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = FakeSession()
+
+    monkeypatch.setattr(
+        webhook_routes,
+        "parse_paddle_subscription_event",
+        Mock(
+            side_effect=PaddleSubscriptionSyncError(
+                "Invalid subscription event."
+            )
+        ),
+    )
+
+    _override_database(db)
+
+    client = TestClient(app)
+
+    raw_body = _raw_body()
+
+    response = _post_webhook(
+        client,
+        raw_body=raw_body,
+        signature_header=_signature_header(
+            raw_body
+        ),
+    )
+
+    assert response.status_code == 500
+
+    assert response.json() == {
+        "detail": "Unable to process Paddle webhook."
+    }
+
+    assert len(db.added) == 1
+    assert db.commit_calls == 0
+    assert db.rollback_calls == 1
+
+
+def test_subscription_service_failure_rolls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = FakeSession()
+
+    parser, synchronize = (
+        _patch_subscription_processing(
+            monkeypatch
+        )
+    )
+
+    synchronize.side_effect = (
+        PaddleSubscriptionServiceError(
+            "Unable to synchronize."
+        )
+    )
+
+    _override_database(db)
+
+    client = TestClient(app)
+
+    raw_body = _raw_body()
+
+    response = _post_webhook(
+        client,
+        raw_body=raw_body,
+        signature_header=_signature_header(
+            raw_body
+        ),
+    )
+
+    assert response.status_code == 500
+
+    assert response.json() == {
+        "detail": "Unable to process Paddle webhook."
+    }
+
+    parser.assert_called_once()
+
+    assert len(db.added) == 1
+    assert db.commit_calls == 0
+    assert db.rollback_calls == 1
+
+
 def test_commit_database_failure_returns_safe_500(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = FakeSession(
         commit_error=SQLAlchemyError(
             "Commit failed."
         )
+    )
+
+    _patch_subscription_processing(
+        monkeypatch
     )
 
     _override_database(db)
@@ -463,14 +783,10 @@ def test_commit_database_failure_returns_safe_500(
     assert db.rollback_calls == 1
 
 
-def test_concurrent_duplicate_integrity_error_is_idempotent(
+def test_concurrent_processed_duplicate_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    existing_event = BillingEvent(
-        provider="paddle",
-        provider_event_id="evt_123",
-        event_type="subscription.updated",
-        payload=EVENT_PAYLOAD,
-    )
+    existing_event = _processed_event()
 
     db = FakeSession(
         commit_error=IntegrityError(
@@ -482,6 +798,10 @@ def test_concurrent_duplicate_integrity_error_is_idempotent(
             None,
             existing_event,
         ],
+    )
+
+    _patch_subscription_processing(
+        monkeypatch
     )
 
     _override_database(db)
@@ -506,11 +826,13 @@ def test_concurrent_duplicate_integrity_error_is_idempotent(
 
     assert db.scalar_calls == 2
     assert len(db.added) == 1
+
     assert db.commit_calls == 1
     assert db.rollback_calls == 1
 
 
 def test_unrelated_integrity_error_returns_safe_500(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = FakeSession(
         commit_error=IntegrityError(
@@ -522,6 +844,10 @@ def test_unrelated_integrity_error_returns_safe_500(
             None,
             None,
         ],
+    )
+
+    _patch_subscription_processing(
+        monkeypatch
     )
 
     _override_database(db)
@@ -546,5 +872,6 @@ def test_unrelated_integrity_error_returns_safe_500(
 
     assert db.scalar_calls == 2
     assert len(db.added) == 1
+
     assert db.commit_calls == 1
     assert db.rollback_calls == 1

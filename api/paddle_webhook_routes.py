@@ -1,14 +1,15 @@
 """
 Paddle billing webhook API routes.
 
-This endpoint verifies Paddle webhook signatures before parsing
-or persisting webhook payloads. Subscription state synchronization
-is intentionally handled separately.
+Webhook signatures are verified before JSON parsing. Events are persisted
+idempotently and supported subscription events are synchronized into the
+local subscription state in the same database transaction.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -20,6 +21,15 @@ from api.dependencies import get_db
 from rag.config import Config
 from rag.logger import get_logger
 from rag.models import BillingEvent
+from rag.paddle_subscription_service import (
+    PaddleSubscriptionService,
+    PaddleSubscriptionServiceError,
+)
+from rag.paddle_subscription_sync import (
+    SUPPORTED_SUBSCRIPTION_EVENTS,
+    PaddleSubscriptionSyncError,
+    parse_paddle_subscription_event,
+)
 from rag.paddle_webhooks import (
     PaddleWebhookVerificationError,
     verify_paddle_webhook,
@@ -33,6 +43,12 @@ router = APIRouter(
     prefix="/webhooks",
     tags=["Billing"],
 )
+
+
+def _utc_now() -> datetime:
+    """Return the current UTC time."""
+
+    return datetime.now(timezone.utc)
 
 
 def _validate_event_payload(
@@ -71,6 +87,74 @@ def _validate_event_payload(
     )
 
 
+def _get_existing_event(
+    db: Session,
+    *,
+    event_id: str,
+) -> BillingEvent | None:
+    """Return an already-persisted Paddle event."""
+
+    return db.scalar(
+        select(BillingEvent).where(
+            BillingEvent.provider == "paddle",
+            BillingEvent.provider_event_id == event_id,
+        )
+    )
+
+
+def _process_billing_event(
+    db: Session,
+    *,
+    billing_event: BillingEvent,
+) -> None:
+    """
+    Process one persisted Paddle billing event.
+
+    Unsupported Paddle event types are intentionally treated as processed
+    after persistence because they require no local subscription mutation.
+
+    Supported subscription events are normalized and synchronized by the
+    Paddle subscription service.
+
+    The caller owns the transaction commit.
+    """
+
+    if (
+        billing_event.event_type
+        not in SUPPORTED_SUBSCRIPTION_EVENTS
+    ):
+        billing_event.processed_at = _utc_now()
+        return
+
+    state = parse_paddle_subscription_event(
+        billing_event.payload
+    )
+
+    service = PaddleSubscriptionService(
+        db
+    )
+
+    service.synchronize(
+        state=state,
+        billing_event=billing_event,
+    )
+
+
+def _process_and_commit(
+    db: Session,
+    *,
+    billing_event: BillingEvent,
+) -> None:
+    """Process an event and atomically commit its resulting state."""
+
+    _process_billing_event(
+        db,
+        billing_event=billing_event,
+    )
+
+    db.commit()
+
+
 @router.post(
     "/paddle",
     status_code=status.HTTP_200_OK,
@@ -83,10 +167,12 @@ async def receive_paddle_webhook(
     ],
 ) -> dict[str, str]:
     """
-    Verify and persist a Paddle webhook event idempotently.
+    Verify, persist, and process a Paddle webhook idempotently.
 
-    The raw request body is verified before JSON parsing.
-    This endpoint deliberately does not mutate subscription state yet.
+    A processed duplicate returns success immediately.
+
+    A previously persisted but unprocessed event is retried instead of
+    being discarded as a duplicate.
     """
 
     raw_body = await request.body()
@@ -133,11 +219,9 @@ async def receive_paddle_webhook(
     )
 
     try:
-        existing_event = db.scalar(
-            select(BillingEvent).where(
-                BillingEvent.provider == "paddle",
-                BillingEvent.provider_event_id == event_id,
-            )
+        existing_event = _get_existing_event(
+            db,
+            event_id=event_id,
         )
     except SQLAlchemyError:
         db.rollback()
@@ -152,8 +236,47 @@ async def receive_paddle_webhook(
         ) from None
 
     if existing_event is not None:
+        if existing_event.processed_at is not None:
+            return {
+                "status": "duplicate",
+            }
+
+        try:
+            _process_and_commit(
+                db,
+                billing_event=existing_event,
+            )
+        except (
+            PaddleSubscriptionSyncError,
+            PaddleSubscriptionServiceError,
+        ):
+            db.rollback()
+
+            logger.exception(
+                "Unable to synchronize previously persisted "
+                "Paddle subscription event."
+            )
+
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Unable to process Paddle webhook.",
+            ) from None
+
+        except SQLAlchemyError:
+            db.rollback()
+
+            logger.exception(
+                "Database failure while retrying "
+                "Paddle webhook processing."
+            )
+
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Unable to process Paddle webhook.",
+            ) from None
+
         return {
-            "status": "duplicate",
+            "status": "received",
         }
 
     billing_event = BillingEvent(
@@ -168,20 +291,24 @@ async def receive_paddle_webhook(
     )
 
     try:
-        db.commit()
+        _process_and_commit(
+            db,
+            billing_event=billing_event,
+        )
+
     except IntegrityError:
-        # Another worker may have inserted the same Paddle event
-        # after our initial idempotency check.
+        # A second worker may have inserted this event between our
+        # idempotency query and transaction completion.
         db.rollback()
 
         try:
-            existing_event = db.scalar(
-                select(BillingEvent).where(
-                    BillingEvent.provider == "paddle",
-                    BillingEvent.provider_event_id == event_id,
-                )
+            existing_event = _get_existing_event(
+                db,
+                event_id=event_id,
             )
         except SQLAlchemyError:
+            db.rollback()
+
             logger.exception(
                 "Unable to resolve concurrent Paddle webhook."
             )
@@ -191,14 +318,56 @@ async def receive_paddle_webhook(
                 detail="Unable to process Paddle webhook.",
             ) from None
 
-        if existing_event is not None:
+        if existing_event is None:
+            logger.exception(
+                "Paddle webhook transaction failed with "
+                "an unrelated integrity error."
+            )
+
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Unable to process Paddle webhook.",
+            ) from None
+
+        if existing_event.processed_at is not None:
             return {
                 "status": "duplicate",
             }
 
+        try:
+            _process_and_commit(
+                db,
+                billing_event=existing_event,
+            )
+        except (
+            PaddleSubscriptionSyncError,
+            PaddleSubscriptionServiceError,
+            SQLAlchemyError,
+        ):
+            db.rollback()
+
+            logger.exception(
+                "Unable to process concurrent persisted "
+                "Paddle webhook."
+            )
+
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Unable to process Paddle webhook.",
+            ) from None
+
+        return {
+            "status": "received",
+        }
+
+    except (
+        PaddleSubscriptionSyncError,
+        PaddleSubscriptionServiceError,
+    ):
+        db.rollback()
+
         logger.exception(
-            "Paddle webhook persistence failed with "
-            "an unexpected integrity error."
+            "Unable to synchronize Paddle subscription event."
         )
 
         raise HTTPException(
@@ -210,7 +379,7 @@ async def receive_paddle_webhook(
         db.rollback()
 
         logger.exception(
-            "Unable to persist Paddle webhook."
+            "Database failure while processing Paddle webhook."
         )
 
         raise HTTPException(
