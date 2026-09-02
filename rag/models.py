@@ -9,6 +9,7 @@ from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -679,7 +680,7 @@ class BillingEvent(Base):
     )
 
     payload: Mapped[dict] = mapped_column(
-        JSONB,
+        JSON().with_variant(JSONB(), "postgresql"),
         nullable=False,
     )
 
