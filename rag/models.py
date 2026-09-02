@@ -478,6 +478,11 @@ class Subscription(Base):
         nullable=True,
     )
 
+    provider_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
     status: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
