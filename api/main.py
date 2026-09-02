@@ -18,6 +18,9 @@ from api.document_routes import router as document_router
 from api.invoice_preflight_routes import (
     router as invoice_preflight_router,
 )
+from api.paddle_checkout_routes import (
+    router as paddle_checkout_router,
+)
 from api.paddle_webhook_routes import (
     router as paddle_webhook_router,
 )
@@ -70,6 +73,7 @@ app.include_router(password_reset_router)
 app.include_router(document_router)
 app.include_router(billing_requirement_router)
 app.include_router(invoice_preflight_router)
+app.include_router(paddle_checkout_router)
 app.include_router(paddle_webhook_router)
 app.include_router(router)
 

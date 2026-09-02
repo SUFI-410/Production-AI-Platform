@@ -347,6 +347,91 @@ class ChatResponse(BaseModel):
     )
 
 
+class PaddleCheckoutRequest(BaseModel):
+    """
+    Request for creating a Paddle subscription checkout.
+    """
+
+    plan_code: str = Field(
+        ...,
+        description="Paid subscription plan.",
+        examples=["starter"],
+    )
+
+    billing_interval: str = Field(
+        ...,
+        description="Subscription billing interval.",
+        examples=["monthly"],
+    )
+
+    @field_validator("plan_code")
+    @classmethod
+    def validate_plan_code(
+        cls,
+        value: str,
+    ) -> str:
+        """Allow only paid self-service plans."""
+
+        allowed = {
+            "starter",
+            "professional",
+            "business",
+        }
+
+        if value not in allowed:
+            raise ValueError(
+                "Plan must be starter, professional, or business."
+            )
+
+        return value
+
+    @field_validator("billing_interval")
+    @classmethod
+    def validate_billing_interval(
+        cls,
+        value: str,
+    ) -> str:
+        """Allow supported subscription billing intervals."""
+
+        allowed = {
+            "monthly",
+            "annual",
+        }
+
+        if value not in allowed:
+            raise ValueError(
+                "Billing interval must be monthly or annual."
+            )
+
+        return value
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class PaddleCheckoutResponse(BaseModel):
+    """
+    Paddle checkout transaction returned to the frontend.
+    """
+
+    transaction_id: str = Field(
+        ...,
+        min_length=1,
+        description="Paddle transaction identifier.",
+    )
+
+    checkout_url: str = Field(
+        ...,
+        min_length=1,
+        description="Paddle checkout URL for the transaction.",
+    )
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
 class HealthResponse(BaseModel):
     """
     Health check response.
