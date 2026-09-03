@@ -14,6 +14,7 @@ from fastapi import (
     status,
 )
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from api.dependencies import (
@@ -28,6 +29,12 @@ from rag.billing_requirements import (
 from rag.billing_requirements_service import (
     BillingRequirementsService,
     BillingRequirementsServiceError,
+)
+from rag.billing_service import (
+    BillingService,
+    BillingServiceError,
+    InvoiceCheckNotAllowedError,
+    SubscriptionNotFoundError,
 )
 from rag.config import Config
 from rag.document_storage import LocalDocumentStorage
@@ -87,6 +94,17 @@ def get_invoice_preflight_service(
     )
 
 
+def get_billing_service(
+    db: Annotated[
+        Session,
+        Depends(get_db),
+    ],
+) -> BillingService:
+    """Build the request-scoped subscription billing service."""
+
+    return BillingService(db)
+
+
 @router.post(
     "/evaluate",
     response_model=InvoicePreflightResult,
@@ -105,6 +123,10 @@ def evaluate_invoice_preflight(
         InvoicePreflightService,
         Depends(get_invoice_preflight_service),
     ],
+    billing_service: Annotated[
+        BillingService,
+        Depends(get_billing_service),
+    ],
 ) -> InvoicePreflightResult:
     """
     Evaluate one invoice against tenant billing requirements.
@@ -112,6 +134,9 @@ def evaluate_invoice_preflight(
     Every requested document is resolved using the authenticated
     organization. Documents belonging to another tenant are
     indistinguishable from missing documents.
+
+    A successful preflight consumes one invoice-check allowance.
+    Failed processing rolls back the usage reservation.
     """
 
     requested_document_ids = [
@@ -129,11 +154,27 @@ def evaluate_invoice_preflight(
         ),
     )
 
-    documents = list(
-        db.scalars(
-            statement
-        ).all()
-    )
+    try:
+        documents = list(
+            db.scalars(
+                statement
+            ).all()
+        )
+    except SQLAlchemyError:
+        logger.exception(
+            "Unable to resolve tenant documents "
+            "for invoice preflight."
+        )
+
+        raise HTTPException(
+            status_code=(
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            ),
+            detail=(
+                "Unable to resolve documents "
+                "for invoice preflight."
+            ),
+        ) from None
 
     if len(documents) != len(
         requested_document_ids
@@ -161,15 +202,61 @@ def evaluate_invoice_preflight(
     ]
 
     try:
-        return service.evaluate(
+        billing_service.consume_invoice_check(
+            current_organization.id
+        )
+
+        result = service.evaluate(
             billing_documents,
             invoice_document,
         )
+
+        db.commit()
+
+        return result
+
+    except SubscriptionNotFoundError as exc:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "A subscription or active trial "
+                "is required to run invoice preflight."
+            ),
+        ) from exc
+
+    except InvoiceCheckNotAllowedError as exc:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+    except BillingServiceError:
+        db.rollback()
+
+        logger.exception(
+            "Unable to enforce invoice-preflight "
+            "billing entitlement."
+        )
+
+        raise HTTPException(
+            status_code=(
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            ),
+            detail=(
+                "Unable to verify subscription access."
+            ),
+        ) from None
 
     except (
         InvoicePreflightServiceError,
         BillingRequirementsServiceError,
     ) as exc:
+        db.rollback()
+
         raise HTTPException(
             status_code=(
                 status.HTTP_422_UNPROCESSABLE_CONTENT
@@ -178,6 +265,8 @@ def evaluate_invoice_preflight(
         ) from exc
 
     except TenantDocumentLoadError:
+        db.rollback()
+
         logger.exception(
             "Unable to load one or more tenant documents "
             "for invoice preflight."
@@ -195,6 +284,8 @@ def evaluate_invoice_preflight(
         BillingRequirementsExtractionError,
         InvoiceFactsExtractionError,
     ):
+        db.rollback()
+
         logger.exception(
             "Invoice preflight extraction failed."
         )
@@ -204,5 +295,21 @@ def evaluate_invoice_preflight(
             detail=(
                 "Unable to extract invoice preflight data "
                 "from the documents."
+            ),
+        ) from None
+
+    except SQLAlchemyError:
+        db.rollback()
+
+        logger.exception(
+            "Unable to persist invoice-preflight usage."
+        )
+
+        raise HTTPException(
+            status_code=(
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            ),
+            detail=(
+                "Unable to persist invoice-preflight usage."
             ),
         ) from None

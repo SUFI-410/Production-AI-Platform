@@ -11,14 +11,20 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.auth_routes import router as auth_router
-from api.password_reset_routes import router as password_reset_router
 from api.billing_requirement_routes import (
     router as billing_requirement_router,
 )
+from api.document_routes import router as document_router
 from api.invoice_preflight_routes import (
     router as invoice_preflight_router,
 )
-from api.document_routes import router as document_router
+from api.paddle_checkout_routes import (
+    router as paddle_checkout_router,
+)
+from api.paddle_webhook_routes import (
+    router as paddle_webhook_router,
+)
+from api.password_reset_routes import router as password_reset_router
 from api.routes import router
 from api.schemas import HealthResponse
 from rag.config import Config
@@ -67,6 +73,8 @@ app.include_router(password_reset_router)
 app.include_router(document_router)
 app.include_router(billing_requirement_router)
 app.include_router(invoice_preflight_router)
+app.include_router(paddle_checkout_router)
+app.include_router(paddle_webhook_router)
 app.include_router(router)
 
 
