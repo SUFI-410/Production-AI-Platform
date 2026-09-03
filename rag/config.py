@@ -52,6 +52,62 @@ class Config:
     DATABASE_URL: str | None = os.getenv("DATABASE_URL")
 
     # ------------------------------------------------------------------
+    # Paddle Billing
+    # ------------------------------------------------------------------
+
+    PADDLE_ENVIRONMENT = os.getenv(
+        "PADDLE_ENVIRONMENT",
+        "sandbox",
+    ).lower()
+
+    PADDLE_API_KEY = os.getenv(
+        "PADDLE_API_KEY",
+        "",
+    )
+
+    PADDLE_WEBHOOK_SECRET = os.getenv(
+        "PADDLE_WEBHOOK_SECRET",
+        "",
+    )
+
+    PADDLE_WEBHOOK_TOLERANCE_SECONDS = int(
+        os.getenv(
+            "PADDLE_WEBHOOK_TOLERANCE_SECONDS",
+            "5",
+        )
+    )
+
+    PADDLE_STARTER_MONTHLY_PRICE_ID = os.getenv(
+        "PADDLE_STARTER_MONTHLY_PRICE_ID",
+        "",
+    )
+
+    PADDLE_STARTER_ANNUAL_PRICE_ID = os.getenv(
+        "PADDLE_STARTER_ANNUAL_PRICE_ID",
+        "",
+    )
+
+    PADDLE_PROFESSIONAL_MONTHLY_PRICE_ID = os.getenv(
+        "PADDLE_PROFESSIONAL_MONTHLY_PRICE_ID",
+        "",
+    )
+
+    PADDLE_PROFESSIONAL_ANNUAL_PRICE_ID = os.getenv(
+        "PADDLE_PROFESSIONAL_ANNUAL_PRICE_ID",
+        "",
+    )
+
+    PADDLE_BUSINESS_MONTHLY_PRICE_ID = os.getenv(
+        "PADDLE_BUSINESS_MONTHLY_PRICE_ID",
+        "",
+    )
+
+    PADDLE_BUSINESS_ANNUAL_PRICE_ID = os.getenv(
+        "PADDLE_BUSINESS_ANNUAL_PRICE_ID",
+        "",
+    )
+
+    # ------------------------------------------------------------------
     # Document Storage
     # ------------------------------------------------------------------
 

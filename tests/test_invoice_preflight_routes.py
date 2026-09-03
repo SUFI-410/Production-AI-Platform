@@ -8,6 +8,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 import api.invoice_preflight_routes as route_module
@@ -21,6 +22,12 @@ from rag.billing_requirements import (
 )
 from rag.billing_requirements_service import (
     BillingRequirementsServiceError,
+)
+from rag.billing_service import (
+    BillingService,
+    BillingServiceError,
+    InvoiceCheckNotAllowedError,
+    SubscriptionNotFoundError,
 )
 from rag.invoice_facts import InvoiceFactsExtractionError
 from rag.invoice_preflight import (
@@ -64,6 +71,8 @@ INVOICE_DOCUMENT_ID = UUID(
 
 
 class FakeScalarResult:
+    """Controllable scalar-result wrapper."""
+
     def __init__(
         self,
         records: list[DocumentRecord],
@@ -77,12 +86,22 @@ class FakeScalarResult:
 
 
 class FakeSession:
+    """Minimal request-scoped database session fake."""
+
     def __init__(
         self,
         records: list[DocumentRecord],
+        *,
+        scalars_error: SQLAlchemyError | None = None,
+        commit_error: SQLAlchemyError | None = None,
     ) -> None:
         self.records = records
+        self.scalars_error = scalars_error
+        self.commit_error = commit_error
+
         self.statements: list[Any] = []
+        self.commit_calls = 0
+        self.rollback_calls = 0
 
     def scalars(
         self,
@@ -90,12 +109,30 @@ class FakeSession:
     ) -> FakeScalarResult:
         self.statements.append(statement)
 
+        if self.scalars_error is not None:
+            raise self.scalars_error
+
         return FakeScalarResult(
             self.records
         )
 
+    def commit(
+        self,
+    ) -> None:
+        self.commit_calls += 1
+
+        if self.commit_error is not None:
+            raise self.commit_error
+
+    def rollback(
+        self,
+    ) -> None:
+        self.rollback_calls += 1
+
 
 class FakeInvoicePreflightService:
+    """Controllable invoice-preflight application service."""
+
     def __init__(
         self,
         result: InvoicePreflightResult | None = None,
@@ -108,7 +145,9 @@ class FakeInvoicePreflightService:
                 findings=[],
             )
         )
+
         self.error = error
+
         self.calls: list[
             tuple[
                 list[DocumentRecord],
@@ -132,6 +171,29 @@ class FakeInvoicePreflightService:
             raise self.error
 
         return self.result
+
+
+class FakeBillingService:
+    """Controllable subscription billing service."""
+
+    def __init__(
+        self,
+        *,
+        error: Exception | None = None,
+    ) -> None:
+        self.error = error
+        self.calls: list[UUID] = []
+
+    def consume_invoice_check(
+        self,
+        organization_id: UUID,
+    ) -> None:
+        self.calls.append(
+            organization_id
+        )
+
+        if self.error is not None:
+            raise self.error
 
 
 @pytest.fixture(autouse=True)
@@ -229,6 +291,36 @@ def _override_service(
     )
 
 
+def _override_billing_service(
+    billing_service: FakeBillingService,
+) -> None:
+    app.dependency_overrides[
+        route_module.get_billing_service
+    ] = lambda: cast(
+        BillingService,
+        billing_service,
+    )
+
+
+def _request_payload(
+    *,
+    billing_document_ids: list[UUID] | None = None,
+    invoice_document_id: UUID = INVOICE_DOCUMENT_ID,
+) -> dict[str, Any]:
+    return {
+        "billing_document_ids": [
+            str(document_id)
+            for document_id in (
+                billing_document_ids
+                or [BILLING_DOCUMENT_ID_1]
+            )
+        ],
+        "invoice_document_id": str(
+            invoice_document_id
+        ),
+    }
+
+
 def test_evaluate_returns_preflight_result_in_requested_order(
 ) -> None:
     first = _billing_document_one()
@@ -267,23 +359,25 @@ def test_evaluate_returns_preflight_result_in_requested_order(
         )
     )
 
+    billing_service = FakeBillingService()
+
     _override_database(db)
     _override_organization()
     _override_service(service)
+    _override_billing_service(
+        billing_service
+    )
 
     client = TestClient(app)
 
     response = client.post(
         "/invoice-preflight/evaluate",
-        json={
-            "billing_document_ids": [
-                str(BILLING_DOCUMENT_ID_1),
-                str(BILLING_DOCUMENT_ID_2),
+        json=_request_payload(
+            billing_document_ids=[
+                BILLING_DOCUMENT_ID_1,
+                BILLING_DOCUMENT_ID_2,
             ],
-            "invoice_document_id": str(
-                INVOICE_DOCUMENT_ID
-            ),
-        },
+        ),
     )
 
     assert response.status_code == 200
@@ -310,6 +404,10 @@ def test_evaluate_returns_preflight_result_in_requested_order(
         ],
     }
 
+    assert billing_service.calls == [
+        ORGANIZATION_ID
+    ]
+
     assert len(service.calls) == 1
 
     billing_documents, invoice_document = service.calls[0]
@@ -332,8 +430,198 @@ def test_evaluate_returns_preflight_result_in_requested_order(
     assert "documents.organization_id" in sql
     assert ORGANIZATION_ID in compiled.params.values()
 
+    assert db.commit_calls == 1
+    assert db.rollback_calls == 0
 
-def test_evaluate_rejects_missing_or_foreign_document() -> None:
+
+def test_successful_preflight_consumes_exactly_one_check(
+) -> None:
+    first = _billing_document_one()
+    invoice = _invoice_document()
+
+    db = FakeSession(
+        [
+            first,
+            invoice,
+        ]
+    )
+
+    service = FakeInvoicePreflightService()
+    billing_service = FakeBillingService()
+
+    _override_database(db)
+    _override_organization()
+    _override_service(service)
+    _override_billing_service(
+        billing_service
+    )
+
+    client = TestClient(app)
+
+    response = client.post(
+        "/invoice-preflight/evaluate",
+        json=_request_payload(),
+    )
+
+    assert response.status_code == 200
+
+    assert billing_service.calls == [
+        ORGANIZATION_ID
+    ]
+
+    assert len(service.calls) == 1
+
+    assert db.commit_calls == 1
+    assert db.rollback_calls == 0
+
+
+def test_evaluate_rejects_missing_or_foreign_document(
+) -> None:
+    first = _billing_document_one()
+    invoice = _invoice_document()
+
+    db = FakeSession(
+        [
+            first,
+            invoice,
+        ]
+    )
+
+    service = FakeInvoicePreflightService()
+    billing_service = FakeBillingService()
+
+    _override_database(db)
+    _override_organization()
+    _override_service(service)
+    _override_billing_service(
+        billing_service
+    )
+
+    client = TestClient(app)
+
+    response = client.post(
+        "/invoice-preflight/evaluate",
+        json=_request_payload(
+            billing_document_ids=[
+                BILLING_DOCUMENT_ID_1,
+                BILLING_DOCUMENT_ID_2,
+            ],
+        ),
+    )
+
+    assert response.status_code == 404
+
+    assert response.json() == {
+        "detail": (
+            "One or more documents were not found."
+        )
+    }
+
+    assert billing_service.calls == []
+    assert service.calls == []
+
+    assert db.commit_calls == 0
+    assert db.rollback_calls == 0
+
+
+def test_evaluate_rejects_duplicate_billing_document_ids(
+) -> None:
+    db = FakeSession([])
+    service = FakeInvoicePreflightService()
+    billing_service = FakeBillingService()
+
+    _override_database(db)
+    _override_organization()
+    _override_service(service)
+    _override_billing_service(
+        billing_service
+    )
+
+    client = TestClient(app)
+
+    response = client.post(
+        "/invoice-preflight/evaluate",
+        json=_request_payload(
+            billing_document_ids=[
+                BILLING_DOCUMENT_ID_1,
+                BILLING_DOCUMENT_ID_1,
+            ],
+        ),
+    )
+
+    assert response.status_code == 422
+
+    assert db.statements == []
+    assert billing_service.calls == []
+    assert service.calls == []
+
+
+def test_evaluate_rejects_invoice_in_billing_document_ids(
+) -> None:
+    db = FakeSession([])
+    service = FakeInvoicePreflightService()
+    billing_service = FakeBillingService()
+
+    _override_database(db)
+    _override_organization()
+    _override_service(service)
+    _override_billing_service(
+        billing_service
+    )
+
+    client = TestClient(app)
+
+    response = client.post(
+        "/invoice-preflight/evaluate",
+        json=_request_payload(
+            billing_document_ids=[
+                BILLING_DOCUMENT_ID_1,
+                INVOICE_DOCUMENT_ID,
+            ],
+        ),
+    )
+
+    assert response.status_code == 422
+
+    assert db.statements == []
+    assert billing_service.calls == []
+    assert service.calls == []
+
+
+def test_evaluate_rejects_client_organization_id(
+) -> None:
+    db = FakeSession([])
+    service = FakeInvoicePreflightService()
+    billing_service = FakeBillingService()
+
+    _override_database(db)
+    _override_organization()
+    _override_service(service)
+    _override_billing_service(
+        billing_service
+    )
+
+    client = TestClient(app)
+
+    payload = _request_payload()
+    payload["organization_id"] = str(
+        OTHER_ORGANIZATION_ID
+    )
+
+    response = client.post(
+        "/invoice-preflight/evaluate",
+        json=payload,
+    )
+
+    assert response.status_code == 422
+
+    assert db.statements == []
+    assert billing_service.calls == []
+    assert service.calls == []
+
+
+def test_evaluate_blocks_missing_subscription_before_preflight(
+) -> None:
     first = _billing_document_one()
     invoice = _invoice_document()
 
@@ -346,122 +634,149 @@ def test_evaluate_rejects_missing_or_foreign_document() -> None:
 
     service = FakeInvoicePreflightService()
 
+    billing_service = FakeBillingService(
+        error=SubscriptionNotFoundError(
+            "Organization has no subscription."
+        )
+    )
+
     _override_database(db)
     _override_organization()
     _override_service(service)
+    _override_billing_service(
+        billing_service
+    )
 
     client = TestClient(app)
 
     response = client.post(
         "/invoice-preflight/evaluate",
-        json={
-            "billing_document_ids": [
-                str(BILLING_DOCUMENT_ID_1),
-                str(BILLING_DOCUMENT_ID_2),
-            ],
-            "invoice_document_id": str(
-                INVOICE_DOCUMENT_ID
-            ),
-        },
+        json=_request_payload(),
     )
 
-    assert response.status_code == 404
+    assert response.status_code == 403
 
     assert response.json() == {
         "detail": (
-            "One or more documents were not found."
+            "A subscription or active trial "
+            "is required to run invoice preflight."
+        )
+    }
+
+    assert billing_service.calls == [
+        ORGANIZATION_ID
+    ]
+
+    assert service.calls == []
+
+    assert db.commit_calls == 0
+    assert db.rollback_calls == 1
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Subscription is read-only.",
+        "Invoice-check allowance has been exhausted.",
+    ],
+)
+def test_evaluate_blocks_disallowed_invoice_check_before_preflight(
+    message: str,
+) -> None:
+    first = _billing_document_one()
+    invoice = _invoice_document()
+
+    db = FakeSession(
+        [
+            first,
+            invoice,
+        ]
+    )
+
+    service = FakeInvoicePreflightService()
+
+    billing_service = FakeBillingService(
+        error=InvoiceCheckNotAllowedError(
+            message
+        )
+    )
+
+    _override_database(db)
+    _override_organization()
+    _override_service(service)
+    _override_billing_service(
+        billing_service
+    )
+
+    client = TestClient(app)
+
+    response = client.post(
+        "/invoice-preflight/evaluate",
+        json=_request_payload(),
+    )
+
+    assert response.status_code == 403
+
+    assert response.json() == {
+        "detail": message
+    }
+
+    assert billing_service.calls == [
+        ORGANIZATION_ID
+    ]
+
+    assert service.calls == []
+
+    assert db.commit_calls == 0
+    assert db.rollback_calls == 1
+
+
+def test_evaluate_maps_billing_service_failure_to_safe_error(
+) -> None:
+    first = _billing_document_one()
+    invoice = _invoice_document()
+
+    db = FakeSession(
+        [
+            first,
+            invoice,
+        ]
+    )
+
+    service = FakeInvoicePreflightService()
+
+    billing_service = FakeBillingService(
+        error=BillingServiceError(
+            "Internal entitlement state is invalid."
+        )
+    )
+
+    _override_database(db)
+    _override_organization()
+    _override_service(service)
+    _override_billing_service(
+        billing_service
+    )
+
+    client = TestClient(app)
+
+    response = client.post(
+        "/invoice-preflight/evaluate",
+        json=_request_payload(),
+    )
+
+    assert response.status_code == 500
+
+    assert response.json() == {
+        "detail": (
+            "Unable to verify subscription access."
         )
     }
 
     assert service.calls == []
 
-
-def test_evaluate_rejects_duplicate_billing_document_ids(
-) -> None:
-    db = FakeSession([])
-    service = FakeInvoicePreflightService()
-
-    _override_database(db)
-    _override_organization()
-    _override_service(service)
-
-    client = TestClient(app)
-
-    response = client.post(
-        "/invoice-preflight/evaluate",
-        json={
-            "billing_document_ids": [
-                str(BILLING_DOCUMENT_ID_1),
-                str(BILLING_DOCUMENT_ID_1),
-            ],
-            "invoice_document_id": str(
-                INVOICE_DOCUMENT_ID
-            ),
-        },
-    )
-
-    assert response.status_code == 422
-    assert db.statements == []
-    assert service.calls == []
-
-
-def test_evaluate_rejects_invoice_in_billing_document_ids(
-) -> None:
-    db = FakeSession([])
-    service = FakeInvoicePreflightService()
-
-    _override_database(db)
-    _override_organization()
-    _override_service(service)
-
-    client = TestClient(app)
-
-    response = client.post(
-        "/invoice-preflight/evaluate",
-        json={
-            "billing_document_ids": [
-                str(BILLING_DOCUMENT_ID_1),
-                str(INVOICE_DOCUMENT_ID),
-            ],
-            "invoice_document_id": str(
-                INVOICE_DOCUMENT_ID
-            ),
-        },
-    )
-
-    assert response.status_code == 422
-    assert db.statements == []
-    assert service.calls == []
-
-
-def test_evaluate_rejects_client_organization_id() -> None:
-    db = FakeSession([])
-    service = FakeInvoicePreflightService()
-
-    _override_database(db)
-    _override_organization()
-    _override_service(service)
-
-    client = TestClient(app)
-
-    response = client.post(
-        "/invoice-preflight/evaluate",
-        json={
-            "billing_document_ids": [
-                str(BILLING_DOCUMENT_ID_1),
-            ],
-            "invoice_document_id": str(
-                INVOICE_DOCUMENT_ID
-            ),
-            "organization_id": str(
-                OTHER_ORGANIZATION_ID
-            ),
-        },
-    )
-
-    assert response.status_code == 422
-    assert db.statements == []
-    assert service.calls == []
+    assert db.commit_calls == 0
+    assert db.rollback_calls == 1
 
 
 @pytest.mark.parametrize(
@@ -494,28 +809,36 @@ def test_evaluate_maps_service_validation_errors(
         error=error
     )
 
+    billing_service = FakeBillingService()
+
     _override_database(db)
     _override_organization()
     _override_service(service)
+    _override_billing_service(
+        billing_service
+    )
 
     client = TestClient(app)
 
     response = client.post(
         "/invoice-preflight/evaluate",
-        json={
-            "billing_document_ids": [
-                str(BILLING_DOCUMENT_ID_1),
-            ],
-            "invoice_document_id": str(
-                INVOICE_DOCUMENT_ID
-            ),
-        },
+        json=_request_payload(),
     )
 
     assert response.status_code == 422
+
     assert response.json() == {
         "detail": str(error)
     }
+
+    assert billing_service.calls == [
+        ORGANIZATION_ID
+    ]
+
+    assert len(service.calls) == 1
+
+    assert db.commit_calls == 0
+    assert db.rollback_calls == 1
 
 
 def test_evaluate_maps_document_load_error() -> None:
@@ -535,22 +858,20 @@ def test_evaluate_maps_document_load_error() -> None:
         )
     )
 
+    billing_service = FakeBillingService()
+
     _override_database(db)
     _override_organization()
     _override_service(service)
+    _override_billing_service(
+        billing_service
+    )
 
     client = TestClient(app)
 
     response = client.post(
         "/invoice-preflight/evaluate",
-        json={
-            "billing_document_ids": [
-                str(BILLING_DOCUMENT_ID_1),
-            ],
-            "invoice_document_id": str(
-                INVOICE_DOCUMENT_ID
-            ),
-        },
+        json=_request_payload(),
     )
 
     assert response.status_code == 409
@@ -561,6 +882,13 @@ def test_evaluate_maps_document_load_error() -> None:
             "available for processing."
         )
     }
+
+    assert billing_service.calls == [
+        ORGANIZATION_ID
+    ]
+
+    assert db.commit_calls == 0
+    assert db.rollback_calls == 1
 
 
 @pytest.mark.parametrize(
@@ -591,22 +919,20 @@ def test_evaluate_maps_extraction_errors(
         error=error
     )
 
+    billing_service = FakeBillingService()
+
     _override_database(db)
     _override_organization()
     _override_service(service)
+    _override_billing_service(
+        billing_service
+    )
 
     client = TestClient(app)
 
     response = client.post(
         "/invoice-preflight/evaluate",
-        json={
-            "billing_document_ids": [
-                str(BILLING_DOCUMENT_ID_1),
-            ],
-            "invoice_document_id": str(
-                INVOICE_DOCUMENT_ID
-            ),
-        },
+        json=_request_payload(),
     )
 
     assert response.status_code == 502
@@ -618,27 +944,128 @@ def test_evaluate_maps_extraction_errors(
         )
     }
 
+    assert billing_service.calls == [
+        ORGANIZATION_ID
+    ]
 
-def test_evaluate_requires_authentication() -> None:
-    db = FakeSession([])
+    assert db.commit_calls == 0
+    assert db.rollback_calls == 1
+
+
+def test_evaluate_rolls_back_usage_when_commit_fails(
+) -> None:
+    first = _billing_document_one()
+    invoice = _invoice_document()
+
+    db = FakeSession(
+        [
+            first,
+            invoice,
+        ],
+        commit_error=SQLAlchemyError(
+            "Commit failed."
+        ),
+    )
+
     service = FakeInvoicePreflightService()
+    billing_service = FakeBillingService()
 
     _override_database(db)
+    _override_organization()
     _override_service(service)
+    _override_billing_service(
+        billing_service
+    )
 
     client = TestClient(app)
 
     response = client.post(
         "/invoice-preflight/evaluate",
-        json={
-            "billing_document_ids": [
-                str(BILLING_DOCUMENT_ID_1),
-            ],
-            "invoice_document_id": str(
-                INVOICE_DOCUMENT_ID
-            ),
-        },
+        json=_request_payload(),
+    )
+
+    assert response.status_code == 500
+
+    assert response.json() == {
+        "detail": (
+            "Unable to persist invoice-preflight usage."
+        )
+    }
+
+    assert billing_service.calls == [
+        ORGANIZATION_ID
+    ]
+
+    assert len(service.calls) == 1
+
+    assert db.commit_calls == 1
+    assert db.rollback_calls == 1
+
+
+def test_evaluate_maps_document_query_database_failure(
+) -> None:
+    db = FakeSession(
+        [],
+        scalars_error=SQLAlchemyError(
+            "Query failed."
+        ),
+    )
+
+    service = FakeInvoicePreflightService()
+    billing_service = FakeBillingService()
+
+    _override_database(db)
+    _override_organization()
+    _override_service(service)
+    _override_billing_service(
+        billing_service
+    )
+
+    client = TestClient(app)
+
+    response = client.post(
+        "/invoice-preflight/evaluate",
+        json=_request_payload(),
+    )
+
+    assert response.status_code == 500
+
+    assert response.json() == {
+        "detail": (
+            "Unable to resolve documents "
+            "for invoice preflight."
+        )
+    }
+
+    assert billing_service.calls == []
+    assert service.calls == []
+
+    assert db.commit_calls == 0
+    assert db.rollback_calls == 0
+
+
+def test_evaluate_requires_authentication() -> None:
+    db = FakeSession([])
+    service = FakeInvoicePreflightService()
+    billing_service = FakeBillingService()
+
+    _override_database(db)
+    _override_service(service)
+    _override_billing_service(
+        billing_service
+    )
+
+    client = TestClient(app)
+
+    response = client.post(
+        "/invoice-preflight/evaluate",
+        json=_request_payload(),
     )
 
     assert response.status_code == 401
+
+    assert billing_service.calls == []
     assert service.calls == []
+
+    assert db.commit_calls == 0
+    assert db.rollback_calls == 0
