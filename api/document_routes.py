@@ -32,6 +32,10 @@ from api.dependencies import (
     get_db,
 )
 from api.schemas import DocumentResponse
+from rag.billing_service import (
+    BillingService,
+    BillingServiceError,
+)
 from rag.config import Config
 from rag.document_storage import (
     DocumentStorageError,
@@ -76,6 +80,17 @@ def get_document_storage() -> LocalDocumentStorage:
     return LocalDocumentStorage(
         Config.DOCUMENT_STORAGE_DIR,
     )
+
+
+def get_billing_service(
+    db: Annotated[
+        Session,
+        Depends(get_db),
+    ],
+) -> BillingService:
+    """Return document-upload billing enforcement."""
+
+    return BillingService(db)
 
 
 def _safe_filename(
@@ -300,6 +315,10 @@ async def upload_document(
         Session,
         Depends(get_db),
     ],
+    billing_service: Annotated[
+        BillingService,
+        Depends(get_billing_service),
+    ],
     document_storage: Annotated[
         LocalDocumentStorage,
         Depends(get_document_storage),
@@ -320,6 +339,21 @@ async def upload_document(
 
     filename, content = await _validate_upload(file)
 
+    try:
+        billing_service.ensure_document_upload_allowed(
+            current_organization.id
+        )
+    except BillingServiceError:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Document upload is not allowed by "
+                "the current billing entitlement."
+            ),
+        ) from None
+
     document_id = uuid4()
 
     suffix = PurePosixPath(filename).suffix.casefold()
@@ -332,6 +366,8 @@ async def upload_document(
             content,
         )
     except DocumentStorageError:
+        db.rollback()
+
         logger.exception("Unable to persist uploaded document.")
 
         raise HTTPException(

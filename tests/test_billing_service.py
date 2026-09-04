@@ -12,11 +12,15 @@ from sqlalchemy.orm import Session
 
 from rag.billing_service import (
     BillingService,
+    DocumentUploadNotAllowedError,
     InvoiceCheckNotAllowedError,
     SubscriptionNotFoundError,
 )
 from rag.database import Base
 from rag.models import (
+    Document,
+    DocumentStatus,
+    DocumentType,
     Organization,
     Plan,
     Subscription,
@@ -65,6 +69,7 @@ def _create_plan(
     code: str = "starter",
     limit: int = 3,
     grace: int = 1,
+    documents_limit: int = 50,
 ) -> Plan:
     plan = Plan(
         id=uuid4(),
@@ -75,7 +80,7 @@ def _create_plan(
         invoice_checks_limit=limit,
         invoice_checks_grace=grace,
         users_limit=3,
-        documents_limit=50,
+        documents_limit=documents_limit,
         api_access=False,
         audit_logs=False,
         is_active=True,
@@ -120,6 +125,29 @@ def _create_subscription(
     session.flush()
 
     return subscription
+
+
+def _create_document(
+    session: Session,
+    *,
+    organization: Organization,
+) -> Document:
+    document = Document(
+        id=uuid4(),
+        organization_id=organization.id,
+        uploaded_by_user_id=None,
+        original_filename="requirement.md",
+        content_type="text/markdown",
+        size_bytes=1,
+        storage_key=f"{organization.id}/{uuid4()}.md",
+        document_type=DocumentType.CONTRACT.value,
+        status=DocumentStatus.UPLOADED.value,
+    )
+
+    session.add(document)
+    session.flush()
+
+    return document
 
 
 def test_missing_subscription_is_rejected(
@@ -609,3 +637,90 @@ def test_monthly_usage_resets_into_new_period(
         0,
         tzinfo=timezone.utc,
     )
+
+
+def test_document_upload_is_allowed_below_plan_limit(
+    session: Session,
+) -> None:
+    now = _now()
+    organization = _create_organization(session)
+    plan = _create_plan(
+        session,
+        documents_limit=2,
+    )
+
+    _create_subscription(
+        session,
+        organization=organization,
+        plan=plan,
+        status=SubscriptionStatus.ACTIVE.value,
+        now=now,
+    )
+
+    _create_document(
+        session,
+        organization=organization,
+    )
+
+    BillingService(session).ensure_document_upload_allowed(
+        organization.id,
+        now=now,
+    )
+
+
+def test_document_upload_is_rejected_at_plan_limit(
+    session: Session,
+) -> None:
+    now = _now()
+    organization = _create_organization(session)
+    plan = _create_plan(
+        session,
+        documents_limit=1,
+    )
+
+    _create_subscription(
+        session,
+        organization=organization,
+        plan=plan,
+        status=SubscriptionStatus.ACTIVE.value,
+        now=now,
+    )
+
+    _create_document(
+        session,
+        organization=organization,
+    )
+
+    with pytest.raises(
+        DocumentUploadNotAllowedError,
+        match="Document allowance has been exhausted.",
+    ):
+        BillingService(session).ensure_document_upload_allowed(
+            organization.id,
+            now=now,
+        )
+
+
+def test_document_upload_is_rejected_for_read_only_subscription(
+    session: Session,
+) -> None:
+    now = _now()
+    organization = _create_organization(session)
+    plan = _create_plan(session)
+
+    _create_subscription(
+        session,
+        organization=organization,
+        plan=plan,
+        status=SubscriptionStatus.CANCELED.value,
+        now=now,
+    )
+
+    with pytest.raises(
+        DocumentUploadNotAllowedError,
+        match="Subscription is read-only.",
+    ):
+        BillingService(session).ensure_document_upload_allowed(
+            organization.id,
+            now=now,
+        )

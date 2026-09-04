@@ -19,6 +19,9 @@ from api.dependencies import (
     get_db,
 )
 from api.main import app
+from rag.billing_service import (
+    DocumentUploadNotAllowedError,
+)
 from rag.document_storage import LocalDocumentStorage
 from rag.models import (
     Document as DocumentRecord,
@@ -98,6 +101,21 @@ class FakeSession:
         self.rollback_called = True
 
 
+class FakeBillingService:
+    def __init__(self) -> None:
+        self.error: Exception | None = None
+        self.organization_ids: list[UUID] = []
+
+    def ensure_document_upload_allowed(
+        self,
+        organization_id: UUID,
+    ) -> None:
+        self.organization_ids.append(organization_id)
+
+        if self.error is not None:
+            raise self.error
+
+
 @pytest.fixture
 def document_storage(
     tmp_path: Path,
@@ -111,15 +129,25 @@ def document_storage(
     )
 
 
+@pytest.fixture
+def billing_service() -> FakeBillingService:
+    return FakeBillingService()
+
+
 @pytest.fixture(autouse=True)
 def clear_dependency_overrides(
     document_storage: LocalDocumentStorage,
+    billing_service: FakeBillingService,
 ) -> Iterator[None]:
     app.dependency_overrides.clear()
 
     app.dependency_overrides[
         document_routes_module.get_document_storage
     ] = lambda: document_storage
+
+    app.dependency_overrides[
+        document_routes_module.get_billing_service
+    ] = lambda: billing_service
 
     yield
 
@@ -268,6 +296,53 @@ def test_upload_markdown_creates_document_record() -> None:
         str(ORGANIZATION_ID)
         in document.storage_key
     )
+
+
+def test_upload_rejects_exhausted_document_allowance(
+    document_storage: LocalDocumentStorage,
+    billing_service: FakeBillingService,
+) -> None:
+    db = FakeSession()
+
+    billing_service.error = DocumentUploadNotAllowedError(
+        "Document allowance has been exhausted."
+    )
+
+    _override_database(db)
+    _override_authenticated_tenant()
+
+    response = TestClient(app).post(
+        "/documents",
+        files={
+            "file": (
+                "guide.md",
+                b"# Guide",
+                "text/markdown",
+            )
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "detail": (
+            "Document upload is not allowed by "
+            "the current billing entitlement."
+        )
+    }
+    assert billing_service.organization_ids == [
+        ORGANIZATION_ID
+    ]
+    assert db.added == []
+    assert db.commit_called is False
+    assert db.rollback_called is True
+
+    stored_files = [
+        path
+        for path in document_storage.root_directory.rglob("*")
+        if path.is_file()
+    ]
+
+    assert stored_files == []
 
 
 def test_upload_pdf_creates_document_record() -> None:
@@ -838,3 +913,46 @@ def test_upload_rolls_back_database_failure(
     ]
 
     assert stored_files == []
+
+
+def test_upload_rolls_back_when_storage_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    document_storage: LocalDocumentStorage,
+) -> None:
+    db = FakeSession()
+
+    def fail_save(
+        _storage_key: str,
+        _content: bytes,
+    ) -> Path:
+        raise document_routes_module.DocumentStorageError(
+            "storage failure"
+        )
+
+    monkeypatch.setattr(
+        document_storage,
+        "save",
+        fail_save,
+    )
+
+    _override_database(db)
+    _override_authenticated_tenant()
+
+    response = TestClient(app).post(
+        "/documents",
+        files={
+            "file": (
+                "guide.md",
+                b"# Guide",
+                "text/markdown",
+            )
+        },
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "detail": "Unable to store the document."
+    }
+    assert db.added == []
+    assert db.commit_called is False
+    assert db.rollback_called is True
