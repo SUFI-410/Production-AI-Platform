@@ -25,6 +25,7 @@ from rag.models import (
     Plan,
     Subscription,
     SubscriptionStatus,
+    User,
 )
 
 
@@ -724,3 +725,53 @@ def test_document_upload_is_rejected_for_read_only_subscription(
             organization.id,
             now=now,
         )
+
+
+def test_billing_status_returns_read_only_capacity_snapshot(
+    session: Session,
+) -> None:
+    now = _now()
+    organization = _create_organization(session)
+    plan = _create_plan(session, documents_limit=2)
+    subscription = _create_subscription(
+        session,
+        organization=organization,
+        plan=plan,
+        status=SubscriptionStatus.ACTIVE.value,
+        now=now,
+    )
+    session.add(
+        User(
+            id=uuid4(),
+            organization_id=organization.id,
+            email="owner@example.com",
+            password_hash="stored-password-hash",
+            is_active=True,
+        )
+    )
+    _create_document(session, organization=organization)
+    session.flush()
+
+    result = BillingService(session).status(
+        organization.id,
+        now=now,
+    )
+
+    assert result.subscription_id == subscription.id
+    assert result.plan_code == "starter"
+    assert result.plan_name == "Starter"
+    assert result.subscription_status == "active"
+    assert result.access_mode == "full"
+    assert result.billing_interval == "monthly"
+    assert result.invoice_checks_used == 0
+    assert result.invoice_checks_limit == 3
+    assert result.invoice_checks_grace == 1
+    assert result.can_run_invoice_check is True
+    assert result.documents_used == 1
+    assert result.documents_limit == 2
+    assert result.can_upload_document is True
+    assert result.users_used == 1
+    assert result.users_limit == 3
+    assert result.api_access is False
+    assert result.audit_logs is False
+    assert list(session.new) == []
