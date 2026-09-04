@@ -12,10 +12,11 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from rag.models import (
+    Document,
     Plan,
     Subscription,
     SubscriptionStatus,
@@ -33,6 +34,10 @@ class SubscriptionNotFoundError(BillingServiceError):
 
 class InvoiceCheckNotAllowedError(BillingServiceError):
     """Raised when an organization cannot consume another invoice check."""
+
+
+class DocumentUploadNotAllowedError(BillingServiceError):
+    """Raised when an organization cannot upload another document."""
 
 
 @dataclass(frozen=True)
@@ -475,3 +480,52 @@ class BillingService:
             period_start=period_start,
             period_end=period_end,
         )
+
+    def ensure_document_upload_allowed(
+        self,
+        organization_id: uuid.UUID,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        """
+        Lock and validate the organization's document-upload entitlement.
+
+        The caller must commit or roll back the transaction after the upload.
+        Holding the subscription-row lock until then prevents concurrent
+        requests from exceeding the plan's document limit.
+        """
+
+        effective_now = _as_utc(
+            now or _utc_now()
+        )
+
+        subscription = self._get_subscription(
+            organization_id,
+            lock=True,
+        )
+
+        plan = self._get_plan(
+            subscription.plan_id
+        )
+
+        if self._access_mode(
+            subscription,
+            now=effective_now,
+        ) != "full":
+            raise DocumentUploadNotAllowedError(
+                "Subscription is read-only."
+            )
+
+        documents_used = self.session.scalar(
+            select(
+                func.count(Document.id)
+            ).where(
+                Document.organization_id
+                == organization_id
+            )
+        )
+
+        if (documents_used or 0) >= plan.documents_limit:
+            raise DocumentUploadNotAllowedError(
+                "Document allowance has been exhausted."
+            )
