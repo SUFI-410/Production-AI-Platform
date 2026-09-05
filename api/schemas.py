@@ -22,7 +22,6 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-
 from rag.models import DocumentType
 
 
@@ -489,3 +488,10 @@ class ErrorResponse(BaseModel):
         ...,
         description="Human-readable error message.",
     )
+
+
+class PaddlePortalResponse(BaseModel):
+    """Temporary authenticated Paddle portal link."""
+
+    portal_url: str = Field(..., min_length=1)
+    model_config = ConfigDict(extra="forbid")

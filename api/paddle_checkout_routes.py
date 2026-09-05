@@ -6,15 +6,14 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-
 from api.dependencies import get_current_organization, get_db
 from api.schemas import (
     BillingStatusResponse,
     PaddleCheckoutRequest,
     PaddleCheckoutResponse,
+    PaddlePortalResponse,
 )
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from rag.billing_service import (
     BillingService,
     BillingServiceError,
@@ -26,7 +25,14 @@ from rag.paddle_checkout import (
     PaddleCheckoutConfigurationError,
     PaddleCheckoutService,
 )
-
+from rag.paddle_portal import (
+    PaddlePortalAPIError,
+    PaddlePortalConfigurationError,
+    PaddlePortalError,
+    PaddlePortalService,
+    PaddlePortalUnavailableError,
+)
+from sqlalchemy.orm import Session
 
 router = APIRouter(
     prefix="/billing",
@@ -118,3 +124,31 @@ def create_paddle_checkout(
         transaction_id=result.transaction_id,
         checkout_url=result.checkout_url,
     )
+
+
+def get_portal_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> PaddlePortalService:
+    """Return a request-scoped portal service."""
+    return PaddlePortalService(db)
+
+
+@router.post("/portal", response_model=PaddlePortalResponse)
+def create_paddle_portal(
+    response: Response,
+    organization: Annotated[Organization, Depends(get_current_organization)],
+    service: Annotated[PaddlePortalService, Depends(get_portal_service)],
+) -> PaddlePortalResponse:
+    """Create a fresh portal link for the authenticated organization."""
+    try:
+        url = service.create_session(organization.id)
+    except PaddlePortalUnavailableError:
+        raise HTTPException(404, "No linked Paddle subscription.") from None
+    except PaddlePortalConfigurationError:
+        raise HTTPException(503, "Billing portal is not configured.") from None
+    except PaddlePortalAPIError:
+        raise HTTPException(502, "Unable to open billing portal.") from None
+    except PaddlePortalError:
+        raise HTTPException(500, "Unable to resolve billing account.") from None
+    response.headers["Cache-Control"] = "no-store"
+    return PaddlePortalResponse(portal_url=url)
