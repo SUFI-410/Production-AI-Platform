@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import datetime, timezone
 from typing import cast
 from unittest.mock import Mock
 from uuid import UUID
@@ -13,6 +14,11 @@ from fastapi.testclient import TestClient
 import api.paddle_checkout_routes as checkout_routes
 from api.dependencies import get_current_organization
 from api.main import app
+from rag.billing_service import (
+    BillingServiceError,
+    BillingStatus,
+    SubscriptionNotFoundError,
+)
 from rag.models import Organization
 from rag.paddle_checkout import (
     PaddleCheckoutAPIError,
@@ -63,6 +69,100 @@ def _override_organization(
         Organization,
         resolved,
     )
+
+
+def _override_billing_service(service: Mock) -> None:
+    app.dependency_overrides[
+        checkout_routes.get_billing_service
+    ] = lambda: service
+
+
+def _billing_status() -> BillingStatus:
+    period_start = datetime(2026, 9, 4, tzinfo=timezone.utc)
+    period_end = datetime(2026, 10, 4, tzinfo=timezone.utc)
+
+    return BillingStatus(
+        organization_id=ORGANIZATION_ID,
+        subscription_id=UUID(
+            "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        ),
+        plan_code="starter",
+        plan_name="Starter",
+        subscription_status="active",
+        access_mode="full",
+        billing_interval="monthly",
+        current_period_start=period_start,
+        current_period_end=period_end,
+        cancel_at_period_end=False,
+        invoice_checks_used=2,
+        invoice_checks_limit=250,
+        invoice_checks_grace=10,
+        can_run_invoice_check=True,
+        usage_period_start=period_start,
+        usage_period_end=period_end,
+        documents_used=12,
+        documents_limit=50,
+        can_upload_document=True,
+        users_used=1,
+        users_limit=3,
+        api_access=False,
+        audit_logs=False,
+    )
+
+
+def test_billing_status_returns_authenticated_organization_snapshot() -> None:
+    _override_organization()
+    service = Mock()
+    service.status.return_value = _billing_status()
+    _override_billing_service(service)
+
+    response = TestClient(app).get("/billing/status")
+
+    assert response.status_code == 200
+    assert response.json()["plan_code"] == "starter"
+    assert response.json()["subscription_status"] == "active"
+    assert response.json()["invoice_checks_used"] == 2
+    assert response.json()["documents_used"] == 12
+    assert response.json()["users_used"] == 1
+    service.status.assert_called_once_with(ORGANIZATION_ID)
+
+
+def test_billing_status_returns_404_without_subscription() -> None:
+    _override_organization()
+    service = Mock()
+    service.status.side_effect = SubscriptionNotFoundError(
+        "Organization has no subscription."
+    )
+    _override_billing_service(service)
+
+    response = TestClient(app).get("/billing/status")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": "Organization has no subscription."
+    }
+
+
+def test_billing_status_hides_internal_billing_errors() -> None:
+    _override_organization()
+    service = Mock()
+    service.status.side_effect = BillingServiceError(
+        "Sensitive internal state."
+    )
+    _override_billing_service(service)
+
+    response = TestClient(app).get("/billing/status")
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "detail": "Unable to resolve billing status."
+    }
+
+
+def test_billing_status_requires_authentication() -> None:
+    response = TestClient(app).get("/billing/status")
+
+    assert response.status_code == 401
 
 
 def test_checkout_creates_transaction_for_authenticated_organization(

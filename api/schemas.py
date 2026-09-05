@@ -432,6 +432,38 @@ class PaddleCheckoutResponse(BaseModel):
     )
 
 
+class BillingStatusResponse(BaseModel):
+    """Current subscription, usage, and plan capacities."""
+
+    organization_id: UUID
+    subscription_id: UUID
+    plan_code: str
+    plan_name: str
+    subscription_status: str
+    access_mode: str
+    billing_interval: str | None
+    current_period_start: datetime | None
+    current_period_end: datetime | None
+    cancel_at_period_end: bool
+    invoice_checks_used: int
+    invoice_checks_limit: int
+    invoice_checks_grace: int
+    can_run_invoice_check: bool
+    usage_period_start: datetime
+    usage_period_end: datetime
+    documents_used: int
+    documents_limit: int
+    can_upload_document: bool
+    users_used: int
+    users_limit: int
+    api_access: bool
+    audit_logs: bool
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
 class HealthResponse(BaseModel):
     """
     Health check response.

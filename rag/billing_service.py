@@ -10,7 +10,7 @@ from __future__ import annotations
 import calendar
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -21,6 +21,7 @@ from rag.models import (
     Subscription,
     SubscriptionStatus,
     SubscriptionUsage,
+    User,
 )
 
 
@@ -59,6 +60,35 @@ class BillingEntitlement:
 
     period_start: datetime
     period_end: datetime
+
+
+@dataclass(frozen=True)
+class BillingStatus:
+    """Read-only organization billing and capacity snapshot."""
+
+    organization_id: uuid.UUID
+    subscription_id: uuid.UUID
+    plan_code: str
+    plan_name: str
+    subscription_status: str
+    access_mode: str
+    billing_interval: str | None
+    current_period_start: datetime | None
+    current_period_end: datetime | None
+    cancel_at_period_end: bool
+    invoice_checks_used: int
+    invoice_checks_limit: int
+    invoice_checks_grace: int
+    can_run_invoice_check: bool
+    usage_period_start: datetime
+    usage_period_end: datetime
+    documents_used: int
+    documents_limit: int
+    can_upload_document: bool
+    users_used: int
+    users_limit: int
+    api_access: bool
+    audit_logs: bool
 
 
 def _utc_now() -> datetime:
@@ -395,6 +425,95 @@ class BillingService:
             ),
             period_start=period_start,
             period_end=period_end,
+        )
+
+    def status(
+        self,
+        organization_id: uuid.UUID,
+        *,
+        now: datetime | None = None,
+    ) -> BillingStatus:
+        """Return a read-only billing and capacity snapshot."""
+
+        effective_now = _as_utc(now or _utc_now())
+        subscription = self._get_subscription(organization_id)
+        plan = self._get_plan(subscription.plan_id)
+        usage_now = effective_now
+
+        if (
+            subscription.status != SubscriptionStatus.TRIALING.value
+            and subscription.current_period_end is not None
+            and effective_now
+            >= _as_utc(subscription.current_period_end)
+        ):
+            usage_now = (
+                _as_utc(subscription.current_period_end)
+                - timedelta(microseconds=1)
+            )
+
+        period_start, period_end = self._usage_period(
+            subscription,
+            now=usage_now,
+        )
+
+        usage = self.session.scalar(
+            select(SubscriptionUsage).where(
+                SubscriptionUsage.subscription_id == subscription.id,
+                SubscriptionUsage.period_start == period_start,
+            )
+        )
+        invoice_checks_used = (
+            usage.invoice_checks_used if usage is not None else 0
+        )
+        documents_used = self.session.scalar(
+            select(func.count(Document.id)).where(
+                Document.organization_id == organization_id
+            )
+        ) or 0
+        users_used = self.session.scalar(
+            select(func.count(User.id)).where(
+                User.organization_id == organization_id,
+                User.is_active.is_(True),
+            )
+        ) or 0
+        access_mode = self._access_mode(
+            subscription,
+            now=effective_now,
+        )
+        invoice_hard_limit = (
+            plan.invoice_checks_limit + plan.invoice_checks_grace
+        )
+
+        return BillingStatus(
+            organization_id=organization_id,
+            subscription_id=subscription.id,
+            plan_code=plan.code,
+            plan_name=plan.name,
+            subscription_status=subscription.status,
+            access_mode=access_mode,
+            billing_interval=subscription.billing_interval,
+            current_period_start=subscription.current_period_start,
+            current_period_end=subscription.current_period_end,
+            cancel_at_period_end=subscription.cancel_at_period_end,
+            invoice_checks_used=invoice_checks_used,
+            invoice_checks_limit=plan.invoice_checks_limit,
+            invoice_checks_grace=plan.invoice_checks_grace,
+            can_run_invoice_check=(
+                access_mode == "full"
+                and invoice_checks_used < invoice_hard_limit
+            ),
+            usage_period_start=period_start,
+            usage_period_end=period_end,
+            documents_used=documents_used,
+            documents_limit=plan.documents_limit,
+            can_upload_document=(
+                access_mode == "full"
+                and documents_used < plan.documents_limit
+            ),
+            users_used=users_used,
+            users_limit=plan.users_limit,
+            api_access=plan.api_access,
+            audit_logs=plan.audit_logs,
         )
 
     def consume_invoice_check(

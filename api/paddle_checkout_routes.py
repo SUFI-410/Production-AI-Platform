@@ -7,11 +7,18 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
-from api.dependencies import get_current_organization
+from api.dependencies import get_current_organization, get_db
 from api.schemas import (
+    BillingStatusResponse,
     PaddleCheckoutRequest,
     PaddleCheckoutResponse,
+)
+from rag.billing_service import (
+    BillingService,
+    BillingServiceError,
+    SubscriptionNotFoundError,
 )
 from rag.models import Organization
 from rag.paddle_checkout import (
@@ -25,6 +32,47 @@ router = APIRouter(
     prefix="/billing",
     tags=["Billing"],
 )
+
+
+def get_billing_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> BillingService:
+    """Return the request-scoped local billing service."""
+
+    return BillingService(db)
+
+
+@router.get(
+    "/status",
+    response_model=BillingStatusResponse,
+    status_code=status.HTTP_200_OK,
+)
+def get_billing_status(
+    organization: Annotated[
+        Organization,
+        Depends(get_current_organization),
+    ],
+    service: Annotated[
+        BillingService,
+        Depends(get_billing_service),
+    ],
+) -> BillingStatusResponse:
+    """Return the authenticated organization's billing status."""
+
+    try:
+        result = service.status(organization.id)
+    except SubscriptionNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization has no subscription.",
+        ) from None
+    except BillingServiceError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to resolve billing status.",
+        ) from None
+
+    return BillingStatusResponse(**result.__dict__)
 
 
 @router.post(
